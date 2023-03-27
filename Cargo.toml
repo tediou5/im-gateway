@@ -2,7 +2,6 @@
 members = [
     "link/",
     "proxy/",
-    "local-sync/",
     "rskafka/"
 ]
 

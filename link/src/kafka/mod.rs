@@ -77,15 +77,13 @@ impl Client {
             config.producer.max_batch_size, // maximum bytes
         ));
 
-        tokio_uring::spawn(async move {
-        // tokio::task::spawn_local(async move {
+        tokio::task::spawn_local(async move {
             use tokio_stream::StreamExt as _;
 
             let producer = std::sync::Arc::new(producer);
             while let Some(message) = rx.next().await {
                 let p = producer.clone();
-                tokio_uring::spawn(async move {
-                // tokio::task::spawn_local(async move {
+                tokio::task::spawn_local(async move {
                     Self::_handle(p, message).await;
                 });
             }
