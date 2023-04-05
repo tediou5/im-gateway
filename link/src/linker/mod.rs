@@ -18,18 +18,12 @@ pub(crate) enum Platform {
     Web(axum::extract::ws::WebSocket),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct User {
     pub(crate) pin: std::rc::Rc<String>,
     pub(crate) pc: std::rc::Rc<std::cell::RefCell<Option<tcp::Sender>>>,
     pub(crate) app: std::rc::Rc<std::cell::RefCell<Option<tcp::Sender>>>,
     pub(crate) web: std::rc::Rc<std::cell::RefCell<Option<websocket::Sender>>>,
-}
-
-impl std::fmt::Debug for User {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("User").field(&self.pin).finish()
-    }
 }
 
 impl std::hash::Hash for User {

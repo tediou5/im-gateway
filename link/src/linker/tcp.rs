@@ -43,6 +43,7 @@ pub(crate) async fn auth(mut stream: tokio::net::TcpStream) -> anyhow::Result<()
     if let crate::linker::protocol::control::Event::Package(.., auth) = auth.event {
         TryInto::<crate::linker::Content>::try_into(auth.as_slice())?
             .handle_auth(async move |platform, message| {
+                tracing::info!("platform connection: {platform:?}");
                 match platform.as_str() {
                     "app" => Ok(super::Login {
                         platform: super::Platform::App(stream),
@@ -89,7 +90,7 @@ pub(crate) fn process(
     let (trace_id, auth_message) =
         crate::linker::Content::pack_message(&auth_message, &mut id_worker).unwrap();
     let auth_message: std::rc::Rc<Vec<u8>> = auth_message.into();
-    tracing::debug!("auth message trace id: {}", trace_id);
+    tracing::info!("auth message trace id: {}", trace_id);
     let _ = tx.send(Event::WriteBatch(trace_id, auth_message));
 
     let retry_config = &crate::TCP_CONFIG.get().unwrap().retry;
@@ -189,6 +190,7 @@ fn handle(
     Option<super::ack_window::AckWindow<u64>>,
 ) {
     let ack_window = if let Some(ref retry) = crate::TCP_CONFIG.get().unwrap().retry {
+        tracing::info!("[{pin}]tcp retry: set ack window");
         Some(super::ack_window::AckWindow::new(retry.window_size))
     } else {
         None
