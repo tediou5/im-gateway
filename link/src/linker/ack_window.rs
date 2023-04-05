@@ -20,6 +20,7 @@ impl std::fmt::Debug for Ack {
     }
 }
 
+// #[derive(Debug)]
 pub(crate) struct AckWindow<T>
 where
     T: std::hash::Hash + std::cmp::Ord + std::cmp::PartialOrd + Clone + std::fmt::Debug,
@@ -94,14 +95,14 @@ where
             message: message.clone(),
             skip: true,
         };
-        tracing::debug!("[{pin}]AckWindow: acquire trace_id: {trace_id:?}");
+        tracing::info!("[{pin}]AckWindow: acquire trace_id: {trace_id:?}");
         let mut ack_list = self.ack_list.borrow_mut();
         let flag = ack_list.len();
         // if acquire a new ack & waker is set & never retry before, wake it.
         if let None = ack_list.insert(trace_id, ack) &&
         let Some(w) = self.waker.replace(None) &&
         let 0 = flag {
-            tracing::trace!("[{pin}]AckWindow: acquire: wake future...");
+            tracing::debug!("[{pin}]AckWindow: acquire: wake future...");
             w.wake();
         };
         Ok(())
@@ -109,7 +110,7 @@ where
 
     pub(super) fn ack(&self, pin: &str, trace_id: T) {
         if self.ack_list.borrow_mut().remove(&trace_id).is_some() {
-            tracing::debug!("[{pin}]AckWindow: ack trace_id: {trace_id:?}");
+            tracing::info!("[{pin}]AckWindow: ack trace_id: {trace_id:?}");
             self.retry_times.replace(0);
         };
     }
