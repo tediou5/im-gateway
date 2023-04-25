@@ -1,0 +1,459 @@
+---
+version: 2.1
+
+orbs:
+  slack: circleci/slack@4.10.1
+
+commands:
+  rust_components:
+    description: Verify installed components
+    steps:
+      - run:
+          name: Verify installed components
+          command: |
+            rustup --version
+            rustup show
+            cargo fmt --version
+            cargo clippy --version
+
+  cache_restore:
+    description: Restore Cargo Cache
+    steps:
+      - restore_cache:
+          name: Restoring Cargo Cache
+          keys:
+            - cargo-cache-{{ arch }}-{{ .Branch }}-{{ checksum "Cargo.toml" }}
+            - cargo-cache-{{ arch }}-{{ .Branch }}
+            - cargo-cache
+  cache_save:
+    description: Save Cargo Cache
+    steps:
+      - save_cache:
+          name: Save Cargo Cache
+          paths:
+            - /usr/local/cargo/registry
+          key: cargo-cache-{{ arch }}-{{ .Branch }}-{{ checksum "Cargo.toml" }}
+
+  install_packages:
+    description: Install openjdk-11-jre and zlib-dev
+    steps:
+      - run:
+          name: Install openjdk-11-jre and zlib-dev
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y openjdk-11-jre zlib1g-dev
+
+jobs:
+  fmt:
+    docker:
+      - image: quay.io/influxdb/rust:ci
+    environment:
+      # Disable incremental compilation to avoid overhead. We are not preserving these files anyway.
+      CARGO_INCREMENTAL: "0"
+      # Disable full debug symbol generation to speed up CI build
+      # "1" means line tables only, which is useful for panic tracebacks.
+      RUSTFLAGS: "-C debuginfo=1"
+      # https://github.com/rust-lang/cargo/issues/10280
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - checkout
+      - rust_components
+      - cache_restore
+      - run:
+          name: Rust fmt
+          command: cargo fmt --all -- --check
+      - cache_save
+  lint:
+    docker:
+      - image: quay.io/influxdb/rust:ci
+    environment:
+      # Disable incremental compilation to avoid overhead. We are not preserving these files anyway.
+      CARGO_INCREMENTAL: "0"
+      # Disable full debug symbol generation to speed up CI build
+      # "1" means line tables only, which is useful for panic tracebacks.
+      RUSTFLAGS: "-C debuginfo=1"
+      # https://github.com/rust-lang/cargo/issues/10280
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - checkout
+      - rust_components
+      - cache_restore
+      - run:
+          name: Clippy
+          command: cargo clippy --all-targets --all-features --workspace -- -D warnings
+      - cache_save
+  cargo_audit:
+    docker:
+      - image: quay.io/influxdb/rust:ci
+    environment:
+      # Disable incremental compilation to avoid overhead. We are not preserving these files anyway.
+      CARGO_INCREMENTAL: "0"
+      # Disable full debug symbol generation to speed up CI build
+      # "1" means line tables only, which is useful for panic tracebacks.
+      RUSTFLAGS: "-C debuginfo=1"
+      # https://github.com/rust-lang/cargo/issues/10280
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - checkout
+      - rust_components
+      - cache_restore
+      - run:
+          name: Install Cargo Audit
+          command: cargo install --force cargo-audit
+      # https://github.com/rust-lang/cargo/issues/10280 but `cargo audit` doesn't support `CARGO_NET_GIT_FETCH_WITH_CLI`
+      - run:
+          name: Workaround SSH issues
+          command: |
+            cd /usr/local/cargo
+            git clone https://github.com/RustSec/advisory-db.git
+      - run:
+          name: Cargo Audit
+          command: cargo audit --no-fetch
+      - cache_save
+  doc:
+    docker:
+      - image: quay.io/influxdb/rust:ci
+    environment:
+      # Disable incremental compilation to avoid overhead. We are not preserving these files anyway.
+      CARGO_INCREMENTAL: "0"
+      # Disable full debug symbol generation to speed up CI build
+      # "1" means line tables only, which is useful for panic tracebacks.
+      RUSTFLAGS: "-C debuginfo=1"
+      # https://github.com/rust-lang/cargo/issues/10280
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - checkout
+      - rust_components
+      - cache_restore
+      - run:
+          name: Cargo doc
+          command: cargo doc --all-features --document-private-items --no-deps --workspace
+      - cache_save
+      - run:
+          name: Compress Docs
+          command: tar -cvzf rustdoc.tar.gz target/doc/
+      - store_artifacts:
+          path: rustdoc.tar.gz
+
+  test-redpanda:
+    # setup multiple docker images (see https://circleci.com/docs/2.0/configuration-reference/#docker)
+    docker:
+      - image: quay.io/influxdb/rust:ci
+      - image: vectorized/redpanda:v22.1.4
+        name: redpanda-0
+        command:
+          - redpanda
+          - start
+          - --smp 1
+          - --memory 1G
+          - --reserve-memory 0M
+          - --overprovisioned
+          - --node-id 0
+          - --check=false
+          - --kafka-addr redpanda-0:9092
+          - --rpc-addr redpanda-0:33145
+      - image: vectorized/redpanda:v22.1.4
+        name: redpanda-1
+        command:
+          - redpanda
+          - start
+          - --smp 1
+          - --memory 1G
+          - --reserve-memory 0M
+          - --overprovisioned
+          - --node-id 1
+          - --check=false
+          - --kafka-addr redpanda-1:9092
+          - --rpc-addr redpanda-1:33145
+          - --seeds redpanda-0:33145
+      - image: vectorized/redpanda:v22.1.4
+        name: redpanda-2
+        command:
+          - redpanda
+          - start
+          - --smp 1
+          - --memory 1G
+          - --reserve-memory 0M
+          - --overprovisioned
+          - --node-id 2
+          - --check=false
+          - --kafka-addr redpanda-2:9092
+          - --rpc-addr redpanda-2:33145
+          - --seeds redpanda-0:33145
+      - image: serjs/go-socks5-proxy
+        name: proxy
+    resource_class: xlarge  # use of a smaller executor tends crashes on link
+    environment:
+      # Disable incremental compilation to avoid overhead. We are not preserving these files anyway.
+      CARGO_INCREMENTAL: "0"
+      # Disable full debug symbol generation to speed up CI build
+      # "1" means line tables only, which is useful for panic tracebacks.
+      RUSTFLAGS: "-C debuginfo=1"
+      # https://github.com/rust-lang/cargo/issues/10280
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+      RUST_BACKTRACE: "1"
+      RUST_LOG: "trace"
+      # Run integration tests
+      TEST_INTEGRATION: 1
+      TEST_JAVA_INTEROPT: 1
+      # Don't use the first node here since this is likely the controller and we want to ensure that we automatically
+      # pick the controller for certain actions (e.g. topic creation) and don't just get lucky.
+      KAFKA_CONNECT: "invalid:9092,redpanda-1:9092"
+      SOCKS_PROXY: "proxy:1080"
+    steps:
+      - checkout
+      - rust_components
+      - cache_restore
+      - install_packages
+      - run:
+          name: Cargo test
+          command: cargo test --all-features --all-targets
+      - cache_save
+      - store_artifacts:
+          path: proptest-regressions
+
+  test-kafka:
+    # setup multiple docker images (see https://circleci.com/docs/2.0/configuration-reference/#docker)
+    docker:
+      - image: quay.io/influxdb/rust:ci
+      - image: docker.io/bitnami/zookeeper:3.7
+        name: zookeeper
+        environment:
+          - ALLOW_ANONYMOUS_LOGIN=yes
+      - image: docker.io/bitnami/kafka:3
+        name: kafka-0
+        environment:
+          - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+          - KAFKA_CFG_BROKER_ID=0
+          - ALLOW_PLAINTEXT_LISTENER=yes
+          - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CLIENT:PLAINTEXT,EXTERNAL:PLAINTEXT
+          - KAFKA_CFG_LISTENERS=CLIENT://:9092,EXTERNAL://:9093
+          - KAFKA_CFG_ADVERTISED_LISTENERS=CLIENT://kafka-0:9092,EXTERNAL://kafka-0:9093
+          - KAFKA_INTER_BROKER_LISTENER_NAME=CLIENT
+      - image: docker.io/bitnami/kafka:3
+        name: kafka-1
+        environment:
+          - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+          - KAFKA_CFG_BROKER_ID=1
+          - ALLOW_PLAINTEXT_LISTENER=yes
+          - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CLIENT:PLAINTEXT,EXTERNAL:PLAINTEXT
+          - KAFKA_CFG_LISTENERS=CLIENT://:9092,EXTERNAL://:9093
+          - KAFKA_CFG_ADVERTISED_LISTENERS=CLIENT://kafka-1:9092,EXTERNAL://kafka-1:9093
+          - KAFKA_INTER_BROKER_LISTENER_NAME=CLIENT
+      - image: docker.io/bitnami/kafka:3
+        name: kafka-2
+        environment:
+          - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+          - KAFKA_CFG_BROKER_ID=2
+          - ALLOW_PLAINTEXT_LISTENER=yes
+          - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CLIENT:PLAINTEXT,EXTERNAL:PLAINTEXT
+          - KAFKA_CFG_LISTENERS=CLIENT://:9092,EXTERNAL://:9093
+          - KAFKA_CFG_ADVERTISED_LISTENERS=CLIENT://kafka-2:9092,EXTERNAL://kafka-2:9093
+          - KAFKA_INTER_BROKER_LISTENER_NAME=CLIENT
+      - image: serjs/go-socks5-proxy
+        name: proxy
+    resource_class: xlarge  # use of a smaller executor tends crashes on link
+    environment:
+      # Disable incremental compilation to avoid overhead. We are not preserving these files anyway.
+      CARGO_INCREMENTAL: "0"
+      # Disable full debug symbol generation to speed up CI build
+      # "1" means line tables only, which is useful for panic tracebacks.
+      RUSTFLAGS: "-C debuginfo=1"
+      # https://github.com/rust-lang/cargo/issues/10280
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+      RUST_BACKTRACE: "1"
+      RUST_LOG: "trace"
+      # Run integration tests
+      TEST_INTEGRATION: 1
+      # Kafka support DeleteRecords
+      TEST_DELETE_RECORDS: 1
+      TEST_JAVA_INTEROPT: 1
+      # Don't use the first node here since this is likely the controller and we want to ensure that we automatically
+      # pick the controller for certain actions (e.g. topic creation) and don't just get lucky.
+      KAFKA_CONNECT: "invalid:9093,kafka-1:9093"
+      SOCKS_PROXY: "proxy:1080"
+    steps:
+      - checkout
+      - rust_components
+      - cache_restore
+      - install_packages
+      - run:
+          name: Cargo test
+          command: cargo test --all-features --all-targets
+      - cache_save
+      - store_artifacts:
+          path: proptest-regressions
+
+  # Builds RSKafka w/ default features.
+  build-default-features:
+    docker:
+      - image: quay.io/influxdb/rust:ci
+    resource_class: xlarge  # use of a smaller executor tends crashes on link
+    environment:
+      # Disable incremental compilation to avoid overhead. We are not preserving these files anyway.
+      CARGO_INCREMENTAL: "0"
+      # Disable full debug symbol generation to speed up CI build
+      # "1" means line tables only, which is useful for panic tracebacks.
+      RUSTFLAGS: "-C debuginfo=1"
+      # https://github.com/rust-lang/cargo/issues/10280
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - checkout
+      - rust_components
+      - cache_restore
+      - run:
+          name: Cargo build
+          command: cargo build
+      - cache_save
+
+  # Builds RSKafka with minimal features.
+  build-no-default-features:
+    docker:
+      - image: quay.io/influxdb/rust:ci
+    resource_class: xlarge  # use of a smaller executor tends crashes on link
+    environment:
+      # Disable incremental compilation to avoid overhead. We are not preserving these files anyway.
+      CARGO_INCREMENTAL: "0"
+      # Disable full debug symbol generation to speed up CI build
+      # "1" means line tables only, which is useful for panic tracebacks.
+      RUSTFLAGS: "-C debuginfo=1"
+      # https://github.com/rust-lang/cargo/issues/10280
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - checkout
+      - rust_components
+      - cache_restore
+      - run:
+          name: Cargo build
+          command: cargo build --no-default-features --all-targets
+      - cache_save
+
+  # Builds RSKafka w/ all features.
+  build-all-features:
+    docker:
+      - image: quay.io/influxdb/rust:ci
+    resource_class: xlarge  # use of a smaller executor tends crashes on link
+    environment:
+      # Disable incremental compilation to avoid overhead. We are not preserving these files anyway.
+      CARGO_INCREMENTAL: "0"
+      # Disable full debug symbol generation to speed up CI build
+      # "1" means line tables only, which is useful for panic tracebacks.
+      RUSTFLAGS: "-C debuginfo=1"
+      # https://github.com/rust-lang/cargo/issues/10280
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - checkout
+      - rust_components
+      - cache_restore
+      - run:
+          name: Cargo build
+          command: cargo build --all-features
+      - cache_save
+
+
+  # Builds fuzzing.
+  build-fuzz:
+    docker:
+      - image: quay.io/influxdb/rust:ci
+    resource_class: xlarge  # use of a smaller executor tends crashes on link
+    environment:
+      # Disable incremental compilation to avoid overhead. We are not preserving these files anyway.
+      CARGO_INCREMENTAL: "0"
+      # Disable full debug symbol generation to speed up CI build
+      # "1" means line tables only, which is useful for panic tracebacks.
+      RUSTFLAGS: "-C debuginfo=1"
+      # https://github.com/rust-lang/cargo/issues/10280
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - checkout
+      - rust_components
+      - cache_restore
+      - run:
+          name: Install cargo-fuzz
+          command: cargo install cargo-fuzz
+      - run:
+          name: Install nightly toolchain
+          command: rustup toolchain install nightly-x86_64-unknown-linux-gnu
+      - run:
+          name: Cargo fuzz build
+          command: cargo +nightly fuzz build
+      - cache_save
+
+  # Runs fuzzing
+  run-fuzz:
+    docker:
+      - image: quay.io/influxdb/rust:ci
+    resource_class: xlarge  # use of a smaller executor tends crashes on link
+    environment:
+      # Disable incremental compilation to avoid overhead. We are not preserving these files anyway.
+      CARGO_INCREMENTAL: "0"
+      # Disable full debug symbol generation to speed up CI build
+      # "1" means line tables only, which is useful for panic tracebacks.
+      RUSTFLAGS: "-C debuginfo=1"
+      # https://github.com/rust-lang/cargo/issues/10280
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - checkout
+      - rust_components
+      - cache_restore
+      - restore_cache:
+          name: Restoring artifacts & corpus
+          keys:
+            - fuzz-state
+      - run:
+          name: Install cargo-fuzz
+          command: cargo install cargo-fuzz
+      - run:
+          name: Install nightly toolchain
+          command: rustup toolchain install nightly-x86_64-unknown-linux-gnu
+      - run:
+          name: Cargo fuzz build
+          command: cargo +nightly fuzz build
+      - run:
+          name: Run fuzzers
+          command: |
+            for f in ./fuzz/fuzz_targets/*.rs; do
+              cargo +nightly fuzz run "$(basename "$f" .rs)" -- -runs=100000
+            done
+      - save_cache:
+          name: Save artifacts & corpus
+          paths:
+            - fuzz/artifacts
+            - fuzz/corpus
+          key: fuzz-state-{{ epoch }}
+          when: always
+      - store_artifacts:
+          path: fuzz/artifacts
+      - cache_save
+      - slack/notify:
+          event: fail
+          template: basic_fail_1
+
+workflows:
+  version: 2
+
+  # CI for all pull requests.
+  ci:
+    jobs:
+      - fmt
+      - lint
+      - cargo_audit
+      - test-redpanda
+      - test-kafka
+      - build-default-features
+      - build-no-default-features
+      - build-all-features
+      - build-fuzz
+      - doc
+
+  # Run fuzzers every 30mins
+  fuzz:
+    triggers:
+      - schedule:
+          cron: "0,30 * * * *"
+          filters:
+            branches:
+              only:
+                - main
+    jobs:
+      - run-fuzz

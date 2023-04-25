@@ -1,0 +1,17 @@
+[tcp]
+port = 10001
+
+[kafka]
+addrs = ["172.28.140.237:9092"]
+
+[kafka.producer]
+linger = 10
+max_batch_size = 52_428_800
+
+[kafka.consumer]
+min_batch_size = 1
+max_batch_size = 52_428_800
+max_wait_ms = 100
+
+[redis]
+addrs = "redis://172.28.140.237"
