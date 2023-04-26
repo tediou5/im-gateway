@@ -1,4 +1,9 @@
-#![feature(let_chains, result_option_inspect, async_closure, const_trait_impl)]
+#![feature(
+    let_chains,
+    result_option_inspect,
+    async_closure,
+    string_remove_matches
+)]
 
 use event_loop::Event;
 mod axum_handler;
@@ -13,13 +18,24 @@ mod socket_addr;
 
 use once_cell::sync::OnceCell;
 
+static AUTH_URL: OnceCell<String> = OnceCell::new();
+static HTTP_CLIENT: OnceCell<reqwest::Client> = OnceCell::new();
+
 static EVENT_LOOP: OnceCell<TokioSender<Event>> = OnceCell::new();
 static REDIS_CLIENT: OnceCell<redis::Client> = OnceCell::new();
-static KAFKA_CLIENT: OnceCell<tokio::sync::Mutex<kafka::Client>> = OnceCell::new();
+static KAFKA_CLIENT: OnceCell<kafka::Client> = OnceCell::new();
 type TokioSender<T> = tokio::sync::mpsc::UnboundedSender<T>;
 // type TokioSender<T> = tokio::sync::mpsc::Sender<T>;
 type Sender = TokioSender<processor::TcpEvent>;
 // type Sender = TokioSender<processor::TcpEvent>;
+
+#[derive(clap::Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    // config path
+    #[arg(short, long)]
+    config: String,
+}
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
@@ -28,9 +44,14 @@ async fn main() -> anyhow::Result<()> {
     let local_addr = socket_addr::ipv4::local_addr().await?;
     tracing::error!("local addr: {local_addr:?}");
 
-    let config = config::Config::init();
+    let args = <Args as clap::Parser>::parse();
+    let config = config::Config::init(args.config);
 
     let tcp_listener = tokio::net::TcpListener::bind(config.get_tcp_addr_str()).await?;
+
+    let client = reqwest::Client::new();
+    AUTH_URL.set(config.tcp.auth).unwrap();
+    HTTP_CLIENT.set(client).unwrap();
 
     let redis_client = redis::Client::new(local_addr.to_string(), config.redis.addrs).await?;
     REDIS_CLIENT.set(redis_client).unwrap();
@@ -47,48 +68,38 @@ async fn main() -> anyhow::Result<()> {
                 async move |record, tx: tokio::sync::mpsc::UnboundedSender<Event>| {
                     axum_handler::KAFKA_CONSUME_COUNT
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    tracing::error!("consumed record");
+                    let message: anyhow::Result<kafka::Message> = record
+                        .record
+                        .try_into()
+                        .inspect_err(|e| tracing::error!("consumed record error: {e}"));
 
-                    let value_batch = record.record.value.unwrap_or_default();
-                    let value_batch: Vec<Option<Vec<u8>>> =
-                        serde_json::from_slice(&value_batch).unwrap_or_default();
-                    let value_batch: Vec<event_loop::SendRequest> = value_batch
-                        .into_iter()
-                        .map(|value| {
-                            serde_json::from_str(
-                                String::from_utf8(value.unwrap()).unwrap().as_str(),
-                            )
-                            .unwrap()
-                        })
-                        .collect();
-
-                    let mut chats_batch: ahash::AHashMap<String, Vec<event_loop::SendRequest>> =
-                        ahash::AHashMap::new();
-
-                    for value in value_batch {
-                        chats_batch
-                            .entry(value.chat.clone())
-                            .and_modify(|batch| batch.push(value))
-                            .or_default();
-                    }
-
-                    if let Err(_e) = tx.send(crate::Event::SendBatch(chats_batch)) {
-                        // TODO: handle error
+                    if let Ok(message) = message {
+                        tracing::error!("consume message: \n{message:?}\n------ end ------");
+                        match message {
+                            kafka::Message::Private(recv, message) => {
+                                if let Err(_e) = tx.send(crate::Event::Send(recv, message)) {
+                                    // FIXME: handle error
+                                };
+                            }
+                            kafka::Message::Group(chat, exclusions, additional, message) => {
+                                if let Err(_e) = tx.send(crate::Event::SendBatch(
+                                    chat,
+                                    exclusions,
+                                    additional,
+                                    vec![message],
+                                )) {
+                                    // FIXME: handle error
+                                };
+                            }
+                        }
                     };
-
-                    // if let Ok(send_request) = send_request {
-                    //     // tracing::info!("consume send request: {send_request:?}");
-                    //     if let Err(_e) = tx.send(crate::Event::Send(send_request)) {
-                    //         // TODO: handle error
-                    //     };
-                    // }
                 },
             )
             .await;
     });
 
-    KAFKA_CLIENT
-        .set(tokio::sync::Mutex::new(kafka_client))
-        .unwrap();
+    KAFKA_CLIENT.set(kafka_client).unwrap();
 
     // TODO: init & run raft
 

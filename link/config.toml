@@ -1,12 +1,16 @@
 [tcp]
 port = 10001
+auth = "http://192.168.0.231:10804/v1/rest/merchant/user/parseToken"
 
 [kafka]
-addrs = ["172.28.140.237:9092"]
+addrs = ["192.168.0.93:9092", "192.168.0.93:9093", "192.168.0.93:9094"]
+# addrs = ["172.28.140.237:9092"]
 
 [kafka.producer]
 linger = 10
 max_batch_size = 52_428_800
+business_topic = "im-session-link"
+business_partition = 0
 
 [kafka.consumer]
 min_batch_size = 1
@@ -14,4 +18,5 @@ max_batch_size = 52_428_800
 max_wait_ms = 100
 
 [redis]
-addrs = "redis://172.28.140.237"
+addrs = "redis-cluster://:123456@192.168.0.93:7001?node=@192.168.0.93:7002&node=@192.168.0.93:7003&node=@192.168.0.93:7004&node=@192.168.0.93:7005&node=@192.168.0.93:7006"
+# addrs = "redis://172.28.140.237"

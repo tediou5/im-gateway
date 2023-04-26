@@ -6,8 +6,8 @@ pub(crate) struct Config {
 }
 
 impl Config {
-    pub(crate) fn init() -> Config {
-        let config_text = std::fs::read_to_string("./config.toml").unwrap();
+    pub(crate) fn init<P: AsRef<std::path::Path>>(path: P) -> Config {
+        let config_text = std::fs::read_to_string(path).unwrap();
         toml::from_str(&config_text).unwrap()
     }
 
@@ -19,6 +19,7 @@ impl Config {
 #[derive(serde_derive::Deserialize, Debug, Clone)]
 pub(crate) struct Tcp {
     pub(crate) port: u16,
+    pub(crate) auth: String,
 }
 
 #[derive(serde_derive::Deserialize, Debug, Clone)]
@@ -37,7 +38,8 @@ pub(crate) struct Kafka {
 pub(crate) struct Producer {
     pub(crate) linger: Option<u64>,
     pub(crate) max_batch_size: usize,
-    pub(crate) business_partition: Option<u64>,
+    pub(crate) business_topic: String,
+    pub(crate) business_partition: i32,
 }
 
 #[derive(serde_derive::Deserialize, Debug, Clone)]

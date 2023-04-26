@@ -52,10 +52,10 @@ impl Client {
         Ok(())
     }
 
-    pub(crate) async fn get_router(
-        &self,
-        chat: &str,
-    ) -> anyhow::Result<std::collections::HashSet<String>> {
-        Ok(self.inner.smembers(Self::get_router_key(chat)).await?)
-    }
+    // pub(crate) async fn get_router(
+    //     &self,
+    //     chat: &str,
+    // ) -> anyhow::Result<std::collections::HashSet<String>> {
+    //     Ok(self.inner.smembers(Self::get_router_key(chat)).await?)
+    // }
 }

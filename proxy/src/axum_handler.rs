@@ -18,11 +18,15 @@ pub(crate) static LAST_RESPONSE_COUNT: Lazy<AtomicU64> = Lazy::new(|| AtomicU64:
 #[derive(Debug, Clone, serde_derive::Deserialize, serde_derive::Serialize)]
 #[serde(untagged)]
 pub(crate) enum LinkProtocol {
-    Privite(String /* recv */, String /* content */),
+    Privite(
+        String,                                               /* recv */
+        std::collections::HashMap<String, serde_json::Value>, /* content */
+    ),
     Group(
-        String,                            /* chat */
-        std::collections::HashSet<String>, /* exclusions */
-        String,                            /* content */
+        String,                                               /* chat */
+        std::collections::HashSet<String>,                    /* exclusions */
+        std::collections::HashSet<String>,                    /* additional */
+        std::collections::HashMap<String, serde_json::Value>, /* content */
     ),
 }
 
@@ -77,6 +81,8 @@ pub(crate) async fn send_message(Json(proto): Json<LinkProtocol>) -> Response {
         Ok(linkers) => linkers,
         Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     };
+
+    tracing::error!("produce into: {linkers:?}");
 
     for linker in linkers {
         if let Err(e) = producer.produce(linker, proto.clone()).await {

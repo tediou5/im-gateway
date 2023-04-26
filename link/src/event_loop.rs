@@ -1,48 +1,16 @@
-use std::sync::Arc;
-
 use crate::Sender;
-use ahash::{AHashMap, AHashSet};
-
-#[derive(Debug, Clone, serde_derive::Serialize, serde_derive::Deserialize)]
-pub(crate) struct SendRequest {
-    pub(crate) pin: String,
-    pub(crate) chat: String,
-    pub(crate) content: String,
-}
-
-impl From<SendRequest> for rskafka::record::Record {
-    fn from(value: SendRequest) -> Self {
-        use time::OffsetDateTime;
-
-        Self {
-            key: None,
-            // Handle error
-            value: serde_json::to_vec(&value).ok(),
-            headers: std::collections::BTreeMap::new(),
-            timestamp: OffsetDateTime::now_utc(),
-        }
-    }
-}
-
-impl TryFrom<rskafka::record::Record> for SendRequest {
-    type Error = anyhow::Error;
-
-    fn try_from(value: rskafka::record::Record) -> anyhow::Result<Self> {
-        let rskafka::record::Record { value, .. } = value;
-
-        Ok(serde_json::from_str(
-            String::from_utf8(value.ok_or(anyhow::anyhow!("value is empty"))?)?.as_str(),
-        )?)
-    }
-}
+use ahash::AHashMap;
 
 #[derive(Debug)]
 pub(super) enum Event {
-    // uid, chats
-    Regist(String, Vec<String>, Sender),
-    // recv_list, content
-    Send(SendRequest),
-    SendBatch(ahash::AHashMap<String, Vec<SendRequest>>),
+    Regist(String /* uid */, Vec<String> /* chats */, Sender),
+    Send(String /* recv */, crate::processor::Message),
+    SendBatch(
+        String,                            /* chat */
+        std::collections::HashSet<String>, /* exclusions */
+        std::collections::HashSet<String>, /* additional */
+        Vec<crate::processor::Message>,
+    ),
 }
 
 pub(super) async fn run() -> anyhow::Result<()> {
@@ -52,8 +20,8 @@ pub(super) async fn run() -> anyhow::Result<()> {
     let mut collect_rx = tokio_stream::wrappers::UnboundedReceiverStream::new(collect_rx);
     crate::EVENT_LOOP.set(collect_tx).unwrap();
 
-    let mut users: AHashMap<Arc<String>, Sender> = AHashMap::new();
-    let mut chats: AHashMap<String, AHashSet<String>> = AHashMap::new();
+    let mut users: AHashMap<std::sync::Arc<String>, Sender> = AHashMap::new();
+    let mut chats: AHashMap<String, std::collections::HashSet<String>> = AHashMap::new();
 
     use tokio_stream::StreamExt as _;
     while let Some(event) = collect_rx.next().await {
@@ -63,53 +31,42 @@ pub(super) async fn run() -> anyhow::Result<()> {
 }
 
 async fn _handle(
-    users: &mut AHashMap<Arc<String>, Sender>,
-    chats: &mut AHashMap<String, AHashSet<String>>,
+    users: &mut AHashMap<std::sync::Arc<String>, Sender>,
+    chats: &mut AHashMap<String, std::collections::HashSet<String>>,
     event: Event,
 ) -> anyhow::Result<()> {
     use crate::processor::TcpEvent;
     match event {
         Event::Regist(user, chat_list, sender) => {
-            let user = Arc::new(user);
+            let user = std::sync::Arc::new(user);
             if let Some(sender) = users.insert(user.clone(), sender) {
                 let _ = sender.send(TcpEvent::Close);
             };
 
             for chat in chat_list {
-                // TODO: maybe have a better way to do this
+                // FIXME: maybe have a better way to do this
                 let member = chats.entry(chat).or_default();
                 member.insert(user.to_string());
             }
         }
-        Event::Send(SendRequest {
-            pin: _,
-            chat,
-            content,
-        }) => {
-            if let Some(online) = chats.get_mut(&chat) {
-                let content = std::sync::Arc::new(content);
-                for recv in online.iter() {
-                    if let Some(sender) = users.get(recv) {
-                        let _ = sender.send(TcpEvent::Write(content.clone()));
-                    };
-                }
+        Event::Send(recv, content) => {
+            if let Some(sender) = users.get(&recv) {
+                let content = std::sync::Arc::new(vec![content]);
+                let _ = sender.send(TcpEvent::WriteBatch(content));
             };
         }
-        Event::SendBatch(chats_batch) => {
-            for (chat, batch) in chats_batch.iter() {
-                if let Some(online) = chats.get_mut(chat) {
-                    let len = batch.len();
-                    let contents: String = batch
-                        .iter()
-                        .map(|request| format!("^^{}^^", request.content))
-                        .collect();
-                    let contents = std::sync::Arc::new(contents);
-                    for recv in online.iter() {
-                        if let Some(sender) = users.get(recv) {
-                            let _ = sender.send(TcpEvent::WriteBatch(contents.clone(), len as u64));
-                        };
-                    }
-                };
+        Event::SendBatch(chat, exclusions, additional, message) => {
+            if let Some(online) = chats.get_mut(chat.as_str()) {
+                let message = std::sync::Arc::new(message);
+                let recv_list: std::collections::HashSet<String> = online
+                    .difference(&exclusions)
+                    .map(|recv| recv.to_string())
+                    .collect();
+                for recv in recv_list.union(&additional) {
+                    if let Some(sender) = users.get(recv) {
+                        let _ = sender.send(TcpEvent::WriteBatch(message.clone()));
+                    };
+                }
             }
         }
     }

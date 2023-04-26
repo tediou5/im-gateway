@@ -1,21 +1,12 @@
-#[derive(serde_derive::Deserialize, serde_derive::Serialize)]
-#[serde(untagged)]
-pub(crate) enum Command {
-    Registe {
-        pin: String,
-        chats: Vec<String>,
-    },
-    Send {
-        pin: String,
-        chat: String,
-        content: String,
-    },
-}
+pub(crate) use message::{Content, Message, MessageCodec};
+
+mod auth;
+mod message;
 
 #[derive(Debug)]
 pub(crate) enum TcpEvent {
-    Write(std::sync::Arc<String>),
-    WriteBatch(std::sync::Arc<String>, u64),
+    // Write(std::sync::Arc<Message>),
+    WriteBatch(std::sync::Arc<Vec<Message>>),
     Close,
 }
 
@@ -28,110 +19,180 @@ pub(crate) async fn process(stream: tokio::net::TcpStream) {
     let mut rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
     let mut write = handle(stream, tx);
 
+    use futures::SinkExt as _;
     use tokio_stream::StreamExt as _;
-
     while let Some(text) = rx.next().await {
-        let (text, len) = match text {
-            TcpEvent::Write(text) => (text, 1),
+        let messages = match text {
             TcpEvent::Close => break,
-            TcpEvent::WriteBatch(text, len) => (text, len),
+            TcpEvent::WriteBatch(messages) => messages,
         };
+        let len = messages.len() as u64;
 
-        if (write.writable().await).is_err() {
-            break;
-        };
-        match write.try_write(text.as_bytes()) {
-            Ok(_) => {
+        match write.send(messages).await {
+            Ok(()) => {
                 crate::axum_handler::TCP_SEND_COUNT
                     .fetch_add(len, std::sync::atomic::Ordering::Relaxed);
-                continue;
             }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                continue;
-            }
-            Err(_e) => {
-                break;
-            }
-        }
+            Err(e) => tracing::error!("tcp send error: {e:?}"),
+        };
     }
-
-    use tokio::io::AsyncWriteExt as _;
-    let _ = write.shutdown().await;
 }
 
-/// handle spawn a new thread, read the request through the tcpStream, then send response to channel tx
-fn handle(stream: tokio::net::TcpStream, tx: crate::Sender) -> tokio::net::tcp::OwnedWriteHalf {
-    let (read, write) = stream.into_split();
+fn handle(
+    stream: tokio::net::TcpStream,
+    tx: crate::Sender,
+) -> futures::stream::SplitSink<
+    tokio_util::codec::Framed<tokio::net::TcpStream, MessageCodec>,
+    std::sync::Arc<Vec<Message>>,
+> {
+    use futures::StreamExt as _;
+    use tokio_util::codec::Decoder as _;
+
+    let codec = MessageCodec;
+    let (sink, mut input) = codec.framed(stream).split();
+    // let (mut sink, mut input) = codec.framed(stream);
+    // let (read, write) = stream.split();
     tokio::task::spawn(async move {
-        let mut req = vec![0;4096];
-        // let mut req = [0; 4096];
-        loop {
-            let readable = read.readable().await; // Wait for the socket to be readable
-            if readable.is_ok() {
-                // Try to read data, this may still fail with `WouldBlock`
-                // if the readiness event is a false positive.
-                match read.try_read(&mut req) {
-                    Ok(n) => {
-                        if n == 0 {
-                            let _ = tx.send(TcpEvent::Close);
-                            break;
+        while let Some(message) = input.next().await {
+            if let Ok(message) = message {
+                let Message { content, .. } = &message;
+
+                let message: Option<Message> = match content {
+                    Content::Heart { .. } => {
+                        // TODO:
+
+                        None
+                    }
+                    Content::Connect {
+                        app_id,
+                        token,
+                        platform,
+                    } => {
+                        // TODO:
+                        if let Some(auth_url) = crate::AUTH_URL.get() &&
+                        let Some(http) = crate::HTTP_CLIENT.get() {
+                            let auth::Response {
+                                code,
+                                data: auth::Data {
+                                    base_info,
+                                    chats,
+                                },
+                                message: _auth_message,
+                            } = http.post(auth_url)
+                            .json(&serde_json::json!({
+                                "appId": app_id,
+                                "token": token,
+                                "platform": platform,
+                            }))
+                                .send()
+                                .await
+                                .unwrap()
+                            .json::<auth::Response>().await.unwrap();
+
+                            let mut id = uuid::Uuid::new_v4().to_string();
+                            id.remove_matches("-");
+                            let id = id.as_bytes();
+                            let mut id_bytes = [0u8;32];
+                            id_bytes.copy_from_slice(&id[0..32]);
+
+                            let timestamp = std::time::SystemTime::now()
+                            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs() as i64;
+
+                            match code.as_str() {
+                                "0" => {
+                                    // auth pass, join into event loop.
+                                    if let Some(redis_client) = crate::REDIS_CLIENT.get() {
+                                        let _ = redis_client.regist(&chats).await;
+                                    }
+
+                                    if let Some(event_loop) = crate::EVENT_LOOP.get() {
+                                        let _ = event_loop.send(crate::Event::Regist(base_info.pin.clone(), chats, tx.clone()));
+                                    }
+
+                                    let message_data = std::collections::HashMap::from([
+                                        ("chatId".to_string(), serde_json::json!("")),
+                                        ("msgFormat".to_string(), serde_json::json!("TEXT")),
+                                        ("msgId".to_string(), serde_json::json!(String::from_utf8(id_bytes.to_vec()).unwrap_or_default())),
+                                        ("noticeType".to_string(), serde_json::json!("USER_BASE_INFO")),
+                                        ("body".to_string(), serde_json::json!(serde_json::to_string(&base_info).unwrap_or_default())),
+                                        ("chatMsgType".to_string(), serde_json::json!("Notice")),
+                                        ("fromId".to_string(), serde_json::json!(&base_info.pin)),
+                                        ("appId".to_string(), serde_json::json!(app_id)),
+                                        ("chatType".to_string(), serde_json::json!("Private")),
+                                        ("timestamp".to_string(), serde_json::json!(timestamp)),
+                                    ]);
+                                    let auth_content = Content::Message { _ext: message_data };
+
+                                    let auth_message = Message {
+                                        length: 0,
+                                        msg_id: id_bytes,
+                                        timestamp,
+                                        content: auth_content,
+                                    };
+                                    let _ = tx.send(TcpEvent::WriteBatch(std::sync::Arc::new(vec![auth_message])));
+                                },
+                                _ => {
+                                    // Authorization Error, close connection
+                                    // FIXME: send error message to client and close connection
+                                    let _ = tx.send(TcpEvent::Close);
+                                    break;
+                                }
+                            }
                         }
-                        // req.truncate(n);
-                        let _ = _handle(&req[0..n], &tx).await;
+
+                        None
                     }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        continue;
-                    }
-                    Err(_e) => {
-                        let _ = tx.send(TcpEvent::Close);
-                        break;
-                    }
+                    Content::Message { _ext } => Some(message),
+                };
+
+                // push into Kafka
+                if let Some(kafka) = crate::KAFKA_CLIENT.get() &&
+                let Some(message) = message {
+                    let _ = kafka.produce(message).await;
                 }
-            };
+            }
         }
     });
-    write
+    sink
 }
 
-async fn _handle(request: &[u8], tx: &crate::Sender) -> anyhow::Result<()> {
-    let str = std::str::from_utf8(request)?;
+// async fn _handle(request: &[u8], tx: &crate::Sender) -> anyhow::Result<()> {
+//     let str = std::str::from_utf8(request)?;
 
+// match serde_json::from_str(str)? {
+//     Command::Registe { pin, chats } => {
+//         crate::axum_handler::REGISTER_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-    // TODO: Decode Into Vec<MessageProtocol>
-    // TODO: produce into Kafka()
+//         if let Some(redis_client) = crate::REDIS_CLIENT.get() {
+//             // FIXME:
+//             redis_client.regist(&chats).await?;
+//         }
 
-    match serde_json::from_str(str)? {
-        Command::Registe { pin, chats } => {
-            crate::axum_handler::REGISTER_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+// if let Some(event_loop) = crate::EVENT_LOOP.get() {
+//     event_loop.send(crate::Event::Regist(pin, chats, tx.clone()))?;
+// }
+//     }
+//     Command::Send { pin, chat, content } => {
+//         crate::axum_handler::SEND_REQUEST_COUNT
+//             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-            if let Some(redis_client) = crate::REDIS_CLIENT.get() {
-                // FIXME: 
-                redis_client.regist(&chats).await?;
-            }
+//         let message = crate::event_loop::SendRequest {
+//             pin,
+//             chat: chat.clone(),
+//             content,
+//         };
 
-            if let Some(event_loop) = crate::EVENT_LOOP.get() {
-                event_loop.send(crate::Event::Regist(pin, chats, tx.clone()))?;
-            }
-        }
-        Command::Send { pin, chat, content } => {
-            crate::axum_handler::SEND_REQUEST_COUNT
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-            let message = crate::event_loop::SendRequest {
-                pin,
-                chat: chat.clone(),
-                content,
-            };
-
-            if let Some(producer) = crate::KAFKA_CLIENT.get() &&
-            let Some(redis_client) = crate::REDIS_CLIENT.get() {
-                let routes = redis_client.get_router(chat.as_str()).await?;
-                let mut producer = producer.lock().await;
-                for route in routes {
-                    producer.produce(route, message.clone()).await?;
-                }
-            }
-        }
-    }
-    Ok(())
-}
+//         if let Some(producer) = crate::KAFKA_CLIENT.get() &&
+//         let Some(redis_client) = crate::REDIS_CLIENT.get() {
+//             let routes = redis_client.get_router(chat.as_str()).await?;
+//             let mut producer = producer.lock().await;
+//             for route in routes {
+//                 producer.produce(route, message.clone()).await?;
+//             }
+//         }
+//     }
+// }
+//     Ok(())
+// }

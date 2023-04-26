@@ -1,6 +1,9 @@
+pub(crate) use message::Message;
+
+mod message;
 #[derive(Debug)]
 pub(crate) struct Client {
-    topics: std::collections::HashMap<String, crate::TokioSender<rskafka::record::Record>>,
+    bussiness_client: crate::TokioSender<rskafka::record::Record>,
     inner: std::sync::Arc<rskafka::client::Client>,
     local_addr: String,
     config: crate::config::Kafka,
@@ -9,7 +12,7 @@ pub(crate) struct Client {
 impl Clone for Client {
     fn clone(&self) -> Self {
         Self {
-            topics: self.topics.clone(),
+            bussiness_client: self.bussiness_client.clone(),
             inner: self.inner.clone(),
             local_addr: self.local_addr.clone(),
             config: self.config.clone(),
@@ -35,23 +38,19 @@ impl Client {
         let controller_client = client.controller_client()?;
         let _ = controller_client.create_topic(local_addr, 1, 1, 500).await;
 
-        let partition_client = client.partition_client(local_addr, 0)?;
+        let bussiness_client = client.partition_client(
+            config.producer.business_topic.as_str(),
+            config.producer.business_partition,
+        )?;
 
-        let tx = Self::handle(partition_client, &config);
+        let tx = Self::handle(bussiness_client, &config);
 
         Ok(Self {
-            topics: std::collections::HashMap::from([(local_addr.to_string(), tx)]),
+            bussiness_client: tx,
             inner: client,
             local_addr: local_addr.to_string(),
             config,
         })
-    }
-
-    fn get_partition_client(
-        &self,
-        topic: &str,
-    ) -> anyhow::Result<rskafka::client::partition::PartitionClient> {
-        Ok(self.inner.partition_client(topic, 0)?)
     }
 
     fn handle(
@@ -116,7 +115,7 @@ impl Client {
             .unwrap();
 
         // construct stream consumer
-        let mut stream = StreamConsumerBuilder::new(partition_client.into(), StartOffset::Latest)
+        let mut stream = StreamConsumerBuilder::new(partition_client.into(), StartOffset::Earliest)
             .with_min_batch_size(self.config.consumer.min_batch_size)
             .with_max_batch_size(self.config.consumer.max_batch_size)
             .with_max_wait_ms(self.config.consumer.max_wait_ms)
@@ -130,20 +129,12 @@ impl Client {
         }
     }
 
-    pub(crate) async fn produce<M: Into<rskafka::record::Record>>(
-        &mut self,
-        topic: String,
-        message: M,
-    ) -> anyhow::Result<()> {
-        // Maybe Duplicate
-        let client = self.clone();
-        let producer = self.topics.entry(topic).or_insert_with_key(|topic| {
-            Self::handle(
-                client.get_partition_client(topic.as_str()).unwrap(),
-                &self.config,
-            )
-        });
-        producer.send(message.into())?;
+    pub(crate) async fn produce<M>(&self, message: M) -> anyhow::Result<()>
+    where
+        M: Into<rskafka::record::Record> + std::fmt::Debug,
+    {
+        // tracing::info!("kafka produce: {message:?}");
+        self.bussiness_client.send(message.into())?;
         Ok(())
     }
 }
