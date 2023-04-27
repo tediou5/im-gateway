@@ -1,3 +1,5 @@
+use std::process::id;
+
 use super::auth;
 
 pub(crate) struct MessageCodec;
@@ -123,6 +125,34 @@ impl From<(String, i64, Content)> for Message {
             timestamp,
             content,
         }
+    }
+}
+
+impl TryFrom<serde_json::Value> for Message {
+    type Error = anyhow::Error;
+
+    fn try_from(value: serde_json::Value) -> anyhow::Result<Self> {
+        #[derive(Debug, Clone, serde_derive::Serialize, serde_derive::Deserialize)]
+        struct TempMessage {
+            pub(crate) length: i32,
+            #[serde(rename(deserialize = "msgId", serialize = "msgId"))]
+            pub(crate) msg_id: String,
+            pub(crate) timestamp: i64,
+            pub(crate) content: String,
+        }
+
+        let temp: TempMessage = serde_json::from_value(value)?;
+        let content: Content = serde_json::from_str(&temp.content)?;
+
+        let mut msg_id = [0u8; 32];
+        msg_id.copy_from_slice(&temp.msg_id.as_bytes()[0..32]);
+
+        Ok(Self {
+            length: temp.length,
+            msg_id,
+            timestamp: temp.timestamp,
+            content,
+        })
     }
 }
 
