@@ -1,5 +1,3 @@
-use std::process::id;
-
 use super::auth;
 
 pub(crate) struct MessageCodec;

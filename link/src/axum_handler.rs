@@ -108,6 +108,7 @@ pub(super) async fn run() {
     LAST_COUNT_TIMESTAMP.store(now, std::sync::atomic::Ordering::Relaxed);
 
     let app = Router::new()
+        .route("/websocket", get(crate::linker::websocket::process))
         .route("/count", get(get_count))
         .route("/count", delete(clean_count));
 
