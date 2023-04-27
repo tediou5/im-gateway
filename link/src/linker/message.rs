@@ -1,13 +1,6 @@
-pub(crate) struct MessageCodec;
+use super::auth;
 
-#[derive(Debug, Clone, serde_derive::Serialize, serde_derive::Deserialize)]
-pub(crate) struct Message {
-    pub(crate) length: i32,
-    #[serde(rename(deserialize = "msgId", serialize = "msgId"))]
-    pub(crate) msg_id: [u8; 32],
-    pub(crate) timestamp: i64,
-    pub(crate) content: Content,
-}
+pub(crate) struct MessageCodec;
 
 #[derive(Debug, Clone, serde_derive::Serialize, serde_derive::Deserialize)]
 #[serde(tag = "protocol", content = "data")]
@@ -31,6 +24,108 @@ pub(crate) enum Content {
     },
 }
 
+impl Content {
+    pub(super) fn new_base_info_content(
+        app_id: &str,
+        id: &str,
+        timestamp: i64,
+        base_info: &auth::BaseInfo,
+    ) -> Content {
+        let data = std::collections::HashMap::from([
+            ("chatId".to_string(), serde_json::json!("")),
+            ("msgFormat".to_string(), serde_json::json!("TEXT")),
+            ("msgId".to_string(), serde_json::json!(&id[0..32])),
+            (
+                "noticeType".to_string(),
+                serde_json::json!("USER_BASE_INFO"),
+            ),
+            (
+                "body".to_string(),
+                serde_json::json!(serde_json::to_string(&base_info).unwrap_or_default()),
+            ),
+            ("chatMsgType".to_string(), serde_json::json!("Notice")),
+            ("fromId".to_string(), serde_json::json!(&base_info.pin)),
+            ("appId".to_string(), serde_json::json!(app_id)),
+            ("chatType".to_string(), serde_json::json!("Private")),
+            ("timestamp".to_string(), serde_json::json!(timestamp)),
+        ]);
+        Content::Message { _ext: data }
+    }
+}
+
+#[derive(Debug, Clone, serde_derive::Serialize, serde_derive::Deserialize)]
+pub(crate) struct Message {
+    pub(crate) length: i32,
+    #[serde(rename(deserialize = "msgId", serialize = "msgId"))]
+    pub(crate) msg_id: [u8; 32],
+    pub(crate) timestamp: i64,
+    pub(crate) content: Content,
+}
+
+impl Message {
+    pub(super) async fn handle(self, tx: &crate::Sender) -> anyhow::Result<Option<Self>> {
+        let Message { content, .. } = &self;
+
+        match content {
+            Content::Heart { .. } => {
+                // TODO:
+                Ok(None)
+            }
+            Content::Connect {
+                app_id,
+                token,
+                platform,
+            } => {
+                auth::auth(app_id.as_str(), token.as_str(), platform.as_str())
+                    .await?
+                    .check(app_id, tx)
+                    .await?;
+                Ok(None)
+            }
+            Content::Message { _ext } => Ok(Some(self)),
+            Content::Response { _ext } => Ok(Some(self)),
+        }
+    }
+}
+
+impl From<Content> for Message {
+    fn from(content: Content) -> Self {
+        let id = uuid::Uuid::new_v4().to_string();
+
+        (id, content).into()
+    }
+}
+
+impl From<(String, Content)> for Message {
+    fn from((id, content): (String, Content)) -> Self {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        (id, timestamp, content).into()
+    }
+}
+
+impl From<(String, i64, Content)> for Message {
+    fn from((mut id, timestamp, content): (String, i64, Content)) -> Self {
+        let content_vec: Vec<u8> = serde_json::to_vec(&content).unwrap();
+        let length = content_vec.len() as i32;
+
+        id.remove_matches("-");
+        let id = id.as_bytes();
+        let mut msg_id = [0u8; 32];
+        msg_id.copy_from_slice(&id[0..32]);
+
+        Message {
+            length,
+            msg_id,
+            timestamp,
+            content,
+        }
+    }
+}
+
 // FIXME: if message is too large, the value is empty: Some([])
 impl From<Message> for rskafka::record::Record {
     fn from(value: Message) -> Self {
@@ -40,7 +135,7 @@ impl From<Message> for rskafka::record::Record {
         let mut dst = bytes::BytesMut::new();
 
         use tokio_util::codec::Encoder as _;
-        let _ = codec.encode(value, &mut dst);
+        let _ = codec.encode(&value, &mut dst);
 
         Self {
             key: None,
@@ -53,10 +148,26 @@ impl From<Message> for rskafka::record::Record {
 
 const MAX: usize = 8 * 1024 * 1024;
 
-impl tokio_util::codec::Encoder<Message> for MessageCodec {
+impl tokio_util::codec::Encoder<std::sync::Arc<Vec<Message>>> for MessageCodec {
     type Error = std::io::Error;
 
-    fn encode(&mut self, item: Message, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
+    fn encode(
+        &mut self,
+        items: std::sync::Arc<Vec<Message>>,
+        dst: &mut bytes::BytesMut,
+    ) -> Result<(), Self::Error> {
+        for item in items.iter() {
+            let mut codec = MessageCodec {};
+            let _ = codec.encode(item, dst);
+        }
+        Ok(())
+    }
+}
+
+impl tokio_util::codec::Encoder<&Message> for MessageCodec {
+    type Error = std::io::Error;
+
+    fn encode(&mut self, item: &Message, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
         let content_vec: Vec<u8> = serde_json::to_vec(&item.content).unwrap();
         let length = content_vec.len() as i32;
         if 44 + length as usize > MAX {
@@ -76,8 +187,6 @@ impl tokio_util::codec::Encoder<Message> for MessageCodec {
             item.timestamp
         };
 
-        // Convert the length into a byte array.
-        // The cast to u32 cannot overflow due to the length check above.
         let timestamp_bytes = i64::to_be_bytes(timestamp);
 
         // Reserve space in the buffer.
@@ -88,51 +197,6 @@ impl tokio_util::codec::Encoder<Message> for MessageCodec {
         dst.extend_from_slice(&item.msg_id);
         dst.extend_from_slice(&timestamp_bytes);
         dst.extend_from_slice(&content_vec);
-        Ok(())
-    }
-}
-
-impl tokio_util::codec::Encoder<std::sync::Arc<Vec<Message>>> for MessageCodec {
-    type Error = std::io::Error;
-
-    fn encode(
-        &mut self,
-        items: std::sync::Arc<Vec<Message>>,
-        dst: &mut bytes::BytesMut,
-    ) -> Result<(), Self::Error> {
-        for item in items.iter() {
-            let content_vec: Vec<u8> = serde_json::to_vec(&item.content).unwrap();
-            let length = content_vec.len() as i32;
-            if 44 + length as usize > MAX {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Frame of content length {} is too large.", length),
-                ));
-            }
-            let len_bytes = i32::to_be_bytes(length);
-
-            let timestamp = if item.timestamp == 0 {
-                std::time::SystemTime::now()
-                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64
-            } else {
-                item.timestamp
-            };
-
-            // Convert the length into a byte array.
-            // The cast to u32 cannot overflow due to the length check above.
-            let timestamp_bytes = i64::to_be_bytes(timestamp);
-
-            // Reserve space in the buffer.
-            dst.reserve(44 + length as usize);
-
-            // Write Message to the buffer.
-            dst.extend_from_slice(&len_bytes);
-            dst.extend_from_slice(&item.msg_id);
-            dst.extend_from_slice(&timestamp_bytes);
-            dst.extend_from_slice(&content_vec);
-        }
         Ok(())
     }
 }

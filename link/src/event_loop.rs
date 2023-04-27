@@ -36,12 +36,11 @@ async fn _handle(
     chats: &mut AHashMap<String, std::collections::HashSet<std::sync::Arc<String>>>,
     event: Event,
 ) -> anyhow::Result<()> {
-    use crate::linker::TcpEvent;
     match event {
         Event::Regist(user, chat_list, sender) => {
             let user = std::sync::Arc::new(user);
             if let Some(sender) = users.insert(user.clone(), sender) {
-                let _ = sender.send(TcpEvent::Close);
+                let _ = sender.send(crate::linker::Event::Close);
             };
 
             for chat in chat_list {
@@ -53,30 +52,26 @@ async fn _handle(
         Event::Send(recv, content) => {
             if let Some(sender) = users.get(&recv) {
                 let content = std::sync::Arc::new(vec![content]);
-                let _ = sender.send(TcpEvent::WriteBatch(content));
+                let _ = sender.send(crate::linker::Event::WriteBatch(content));
             };
         }
         Event::SendBatch(chat, exclusions, additional, message) => {
             if let Some(online) = chats.get_mut(chat.as_str()) {
                 let message = std::sync::Arc::new(message);
 
-                let recv_list: std::collections::HashSet<&str> =
+                let mut recv_list: std::collections::HashSet<&str> =
                     online.iter().map(|one| one.as_str()).collect();
                 let exclusions = &exclusions.iter().map(|exc| exc.as_str()).collect();
-                let additional = &additional.iter().map(|add| add.as_str()).collect();
-
-                let recv_list: std::collections::HashSet<&str> = recv_list
-                    .difference(exclusions)
-                    .map(|recv| recv.as_ref())
-                    .collect();
-                for recv in recv_list
-                    .union(additional)
-                    .map(|recv| recv.as_ref())
-                    .collect::<std::collections::HashSet<&str>>()
+                additional
                     .iter()
-                {
+                    .map(|add| add.as_str())
+                    .collect_into(&mut recv_list);
+
+                let recv_list: std::collections::HashSet<&&str> =
+                    recv_list.difference(exclusions).collect();
+                for &&recv in recv_list.iter() {
                     if let Some(sender) = users.get(&recv.to_string()) {
-                        let _ = sender.send(TcpEvent::WriteBatch(message.clone()));
+                        let _ = sender.send(crate::linker::Event::WriteBatch(message.clone()));
                     };
                 }
             }

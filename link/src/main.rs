@@ -2,10 +2,10 @@
     let_chains,
     result_option_inspect,
     async_closure,
-    string_remove_matches
+    string_remove_matches,
+    iter_collect_into
 )]
 
-use event_loop::Event;
 mod axum_handler;
 mod config;
 mod conhash;
@@ -21,12 +21,12 @@ use once_cell::sync::OnceCell;
 static AUTH_URL: OnceCell<String> = OnceCell::new();
 static HTTP_CLIENT: OnceCell<reqwest::Client> = OnceCell::new();
 
-static EVENT_LOOP: OnceCell<TokioSender<Event>> = OnceCell::new();
+static EVENT_LOOP: OnceCell<TokioSender<event_loop::Event>> = OnceCell::new();
 static REDIS_CLIENT: OnceCell<redis::Client> = OnceCell::new();
 static KAFKA_CLIENT: OnceCell<kafka::Client> = OnceCell::new();
 type TokioSender<T> = tokio::sync::mpsc::UnboundedSender<T>;
 // type TokioSender<T> = tokio::sync::mpsc::Sender<T>;
-type Sender = TokioSender<linker::TcpEvent>;
+type Sender = TokioSender<linker::Event>;
 // type Sender = TokioSender<processor::TcpEvent>;
 
 #[derive(clap::Parser, Debug)]
@@ -64,37 +64,35 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::task::spawn(async {
         client
-            .consume(
-                async move |record, tx: tokio::sync::mpsc::UnboundedSender<Event>| {
-                    axum_handler::KAFKA_CONSUME_COUNT
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let message: anyhow::Result<kafka::Message> = record
-                        .record
-                        .try_into()
-                        .inspect_err(|e| tracing::error!("consumed record error: {e}"));
+            .consume(async move |record, tx: TokioSender<event_loop::Event>| {
+                axum_handler::KAFKA_CONSUME_COUNT
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let message: anyhow::Result<kafka::Message> = record
+                    .record
+                    .try_into()
+                    .inspect_err(|e| tracing::error!("consumed record error: {e}"));
 
-                    if let Ok(message) = message {
-                        tracing::debug!("consume message: \n{message:?}\n------ end ------");
-                        match message {
-                            kafka::Message::Private(recv, message) => {
-                                if let Err(_e) = tx.send(crate::Event::Send(recv, message)) {
-                                    // FIXME: handle error
-                                };
-                            }
-                            kafka::Message::Group(chat, exclusions, additional, message) => {
-                                if let Err(_e) = tx.send(crate::Event::SendBatch(
-                                    chat,
-                                    exclusions,
-                                    additional,
-                                    vec![message],
-                                )) {
-                                    // FIXME: handle error
-                                };
-                            }
+                if let Ok(message) = message {
+                    tracing::debug!("consume message: \n{message:?}\n------ end ------");
+                    match message {
+                        kafka::Message::Private(recv, message) => {
+                            if let Err(_e) = tx.send(event_loop::Event::Send(recv, message)) {
+                                // FIXME: handle error
+                            };
                         }
-                    };
-                },
-            )
+                        kafka::Message::Group(chat, exclusions, additional, message) => {
+                            if let Err(_e) = tx.send(event_loop::Event::SendBatch(
+                                chat,
+                                exclusions,
+                                additional,
+                                vec![message],
+                            )) {
+                                // FIXME: handle error
+                            };
+                        }
+                    }
+                };
+            })
             .await;
     });
 
@@ -121,7 +119,7 @@ async fn main() -> anyhow::Result<()> {
 
             // Process each socket concurrently.
             axum_handler::TCP_COUNT.fetch_add(1, Relaxed);
-            linker::process(stream).await;
+            linker::tcp::process(stream).await;
             axum_handler::TCP_COUNT.fetch_sub(1, Relaxed);
         });
     }
