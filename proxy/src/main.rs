@@ -35,6 +35,6 @@ async fn main() -> anyhow::Result<()> {
     tracing::error!("running http server");
     axum_handler::run(config.http).await;
     tracing::error!("closed.");
-    
+
     Ok(())
 }

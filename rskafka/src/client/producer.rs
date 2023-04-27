@@ -236,6 +236,8 @@ pub struct BatchProducerBuilder {
 
     linger: Duration,
 
+    number: usize,
+
     compression: Compression,
 }
 
@@ -250,6 +252,7 @@ impl BatchProducerBuilder {
         Self {
             client,
             linger: Duration::from_millis(5),
+            number: 1,
             compression: Compression::default(),
         }
     }
@@ -257,6 +260,11 @@ impl BatchProducerBuilder {
     /// Sets the minimum amount of time to wait for new data before flushing the batch
     pub fn with_linger(self, linger: Duration) -> Self {
         Self { linger, ..self }
+    }
+
+    /// Sets the maximum number of messages that can be merged into one.
+    pub fn with_num(self, number: usize) -> Self {
+        Self { number, ..self }
     }
 
     /// Sets compression.
@@ -470,6 +478,7 @@ where
                 }
             };
 
+            // let chats_batch: HashMap<String,
             let mut value_batch = vec![];
             let timestamp = output
                 .last()

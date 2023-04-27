@@ -4,12 +4,12 @@ use ahash::AHashMap;
 #[derive(Debug)]
 pub(super) enum Event {
     Regist(String /* uid */, Vec<String> /* chats */, Sender),
-    Send(String /* recv */, crate::processor::Message),
+    Send(String /* recv */, crate::linker::Message),
     SendBatch(
         String,                            /* chat */
         std::collections::HashSet<String>, /* exclusions */
         std::collections::HashSet<String>, /* additional */
-        Vec<crate::processor::Message>,
+        Vec<crate::linker::Message>,
     ),
 }
 
@@ -21,7 +21,8 @@ pub(super) async fn run() -> anyhow::Result<()> {
     crate::EVENT_LOOP.set(collect_tx).unwrap();
 
     let mut users: AHashMap<std::sync::Arc<String>, Sender> = AHashMap::new();
-    let mut chats: AHashMap<String, std::collections::HashSet<String>> = AHashMap::new();
+    let mut chats: AHashMap<String, std::collections::HashSet<std::sync::Arc<String>>> =
+        AHashMap::new();
 
     use tokio_stream::StreamExt as _;
     while let Some(event) = collect_rx.next().await {
@@ -32,10 +33,10 @@ pub(super) async fn run() -> anyhow::Result<()> {
 
 async fn _handle(
     users: &mut AHashMap<std::sync::Arc<String>, Sender>,
-    chats: &mut AHashMap<String, std::collections::HashSet<String>>,
+    chats: &mut AHashMap<String, std::collections::HashSet<std::sync::Arc<String>>>,
     event: Event,
 ) -> anyhow::Result<()> {
-    use crate::processor::TcpEvent;
+    use crate::linker::TcpEvent;
     match event {
         Event::Regist(user, chat_list, sender) => {
             let user = std::sync::Arc::new(user);
@@ -46,7 +47,7 @@ async fn _handle(
             for chat in chat_list {
                 // FIXME: maybe have a better way to do this
                 let member = chats.entry(chat).or_default();
-                member.insert(user.to_string());
+                member.insert(user.clone());
             }
         }
         Event::Send(recv, content) => {
@@ -58,12 +59,23 @@ async fn _handle(
         Event::SendBatch(chat, exclusions, additional, message) => {
             if let Some(online) = chats.get_mut(chat.as_str()) {
                 let message = std::sync::Arc::new(message);
-                let recv_list: std::collections::HashSet<String> = online
-                    .difference(&exclusions)
-                    .map(|recv| recv.to_string())
+
+                let recv_list: std::collections::HashSet<&str> =
+                    online.iter().map(|one| one.as_str()).collect();
+                let exclusions = &exclusions.iter().map(|exc| exc.as_str()).collect();
+                let additional = &additional.iter().map(|add| add.as_str()).collect();
+
+                let recv_list: std::collections::HashSet<&str> = recv_list
+                    .difference(exclusions)
+                    .map(|recv| recv.as_ref())
                     .collect();
-                for recv in recv_list.union(&additional) {
-                    if let Some(sender) = users.get(recv) {
+                for recv in recv_list
+                    .union(additional)
+                    .map(|recv| recv.as_ref())
+                    .collect::<std::collections::HashSet<&str>>()
+                    .iter()
+                {
+                    if let Some(sender) = users.get(&recv.to_string()) {
                         let _ = sender.send(TcpEvent::WriteBatch(message.clone()));
                     };
                 }

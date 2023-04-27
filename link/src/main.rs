@@ -11,7 +11,7 @@ mod config;
 mod conhash;
 mod event_loop;
 mod kafka;
-mod processor;
+mod linker;
 mod raft;
 mod redis;
 mod socket_addr;
@@ -26,7 +26,7 @@ static REDIS_CLIENT: OnceCell<redis::Client> = OnceCell::new();
 static KAFKA_CLIENT: OnceCell<kafka::Client> = OnceCell::new();
 type TokioSender<T> = tokio::sync::mpsc::UnboundedSender<T>;
 // type TokioSender<T> = tokio::sync::mpsc::Sender<T>;
-type Sender = TokioSender<processor::TcpEvent>;
+type Sender = TokioSender<linker::TcpEvent>;
 // type Sender = TokioSender<processor::TcpEvent>;
 
 #[derive(clap::Parser, Debug)]
@@ -68,14 +68,13 @@ async fn main() -> anyhow::Result<()> {
                 async move |record, tx: tokio::sync::mpsc::UnboundedSender<Event>| {
                     axum_handler::KAFKA_CONSUME_COUNT
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    tracing::error!("consumed record");
                     let message: anyhow::Result<kafka::Message> = record
                         .record
                         .try_into()
                         .inspect_err(|e| tracing::error!("consumed record error: {e}"));
 
                     if let Ok(message) = message {
-                        tracing::error!("consume message: \n{message:?}\n------ end ------");
+                        tracing::debug!("consume message: \n{message:?}\n------ end ------");
                         match message {
                             kafka::Message::Private(recv, message) => {
                                 if let Err(_e) = tx.send(crate::Event::Send(recv, message)) {
@@ -122,7 +121,7 @@ async fn main() -> anyhow::Result<()> {
 
             // Process each socket concurrently.
             axum_handler::TCP_COUNT.fetch_add(1, Relaxed);
-            processor::process(stream).await;
+            linker::process(stream).await;
             axum_handler::TCP_COUNT.fetch_sub(1, Relaxed);
         });
     }

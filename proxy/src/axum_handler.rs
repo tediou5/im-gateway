@@ -82,7 +82,7 @@ pub(crate) async fn send_message(Json(proto): Json<LinkProtocol>) -> Response {
         Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     };
 
-    tracing::error!("produce into: {linkers:?}");
+    tracing::debug!("produce into: {linkers:?}");
 
     for linker in linkers {
         if let Err(e) = producer.produce(linker, proto.clone()).await {

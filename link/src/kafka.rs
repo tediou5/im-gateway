@@ -115,7 +115,7 @@ impl Client {
             .unwrap();
 
         // construct stream consumer
-        let mut stream = StreamConsumerBuilder::new(partition_client.into(), StartOffset::Earliest)
+        let mut stream = StreamConsumerBuilder::new(partition_client.into(), StartOffset::Latest)
             .with_min_batch_size(self.config.consumer.min_batch_size)
             .with_max_batch_size(self.config.consumer.max_batch_size)
             .with_max_wait_ms(self.config.consumer.max_wait_ms)
@@ -133,7 +133,7 @@ impl Client {
     where
         M: Into<rskafka::record::Record> + std::fmt::Debug,
     {
-        // tracing::info!("kafka produce: {message:?}");
+        tracing::debug!("kafka produce: {message:?}");
         self.bussiness_client.send(message.into())?;
         Ok(())
     }

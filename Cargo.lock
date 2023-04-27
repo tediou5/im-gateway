@@ -1201,6 +1201,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "im-infra-proxy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap 4.2.4",
+ "fred",
+ "once_cell",
+ "rskafka 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "time",
+ "tokio",
+ "tokio-stream",
+ "toml",
+ "tracing",
+ "tracing-error",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "indexmap"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1899,28 +1921,6 @@ dependencies = [
  "proc-macro2 0.4.30",
  "quote 0.6.13",
  "syn 0.15.44",
-]
-
-[[package]]
-name = "proxy"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap 4.2.4",
- "fred",
- "once_cell",
- "rskafka 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "serde",
- "serde_derive",
- "serde_json",
- "time",
- "tokio",
- "tokio-stream",
- "toml",
- "tracing",
- "tracing-error",
- "tracing-subscriber",
 ]
 
 [[package]]

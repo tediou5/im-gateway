@@ -25,24 +25,11 @@ pub(crate) enum Content {
         #[serde(flatten)]
         _ext: std::collections::HashMap<String, serde_json::Value>,
     },
+    Response {
+        #[serde(flatten)]
+        _ext: std::collections::HashMap<String, serde_json::Value>,
+    },
 }
-
-// impl TryFrom<std::collections::HashMap<String, serde_json::Value>> for Message {
-//     type Error = anyhow::Error;
-
-//     fn try_from(mut value: std::collections::HashMap<String, serde_json::Value>) -> anyhow::Result<Self> {
-//         let length = value.remove("length").ok_or(anyhow::anyhow!("miss match field length"))?;
-//         let msg_id = value.remove("msgId").ok_or(anyhow::anyhow!("miss match field msgId"))?;
-//         let timestamp = value.remove("timestamp").ok_or(anyhow::anyhow!("miss match field timestamp"))?;
-
-//         let content = value.remove("content").ok_or(anyhow::anyhow!("miss match field content"))?;
-//         let content: String = serde_json::from_value(content)?;
-
-
-
-//         todo!()
-//     }
-// }
 
 // FIXME: if message is too large, the value is empty: Some([])
 impl From<Message> for rskafka::record::Record {

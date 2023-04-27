@@ -1,7 +1,7 @@
 #[derive(Debug, serde_derive::Serialize, serde_derive::Deserialize)]
 pub(super) struct Response {
     pub(super) code: String,
-    pub(super) data: Data,
+    pub(super) data: Option<Data>,
     pub(super) message: String,
 }
 
