@@ -28,6 +28,9 @@ pub(crate) enum LinkProtocol {
         std::collections::HashSet<String>,                    /* additional */
         std::collections::HashMap<String, serde_json::Value>, /* content */
     ),
+    Chat(
+        
+    )
 }
 
 impl From<LinkProtocol> for rskafka::record::Record {
@@ -82,7 +85,7 @@ pub(crate) async fn send_message(Json(proto): Json<LinkProtocol>) -> Response {
         Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     };
 
-    tracing::debug!("produce into: {linkers:?}");
+    tracing::error!("produce into: {linkers:?}\nmessage: {proto:?}");
 
     for linker in linkers {
         if let Err(e) = producer.produce(linker, proto.clone()).await {

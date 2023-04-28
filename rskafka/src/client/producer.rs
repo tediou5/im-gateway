@@ -236,7 +236,7 @@ pub struct BatchProducerBuilder {
 
     linger: Duration,
 
-    number: usize,
+    merge_number: Option<usize>,
 
     compression: Compression,
 }
@@ -252,7 +252,7 @@ impl BatchProducerBuilder {
         Self {
             client,
             linger: Duration::from_millis(5),
-            number: 1,
+            merge_number: None,
             compression: Compression::default(),
         }
     }
@@ -263,8 +263,11 @@ impl BatchProducerBuilder {
     }
 
     /// Sets the maximum number of messages that can be merged into one.
-    pub fn with_num(self, number: usize) -> Self {
-        Self { number, ..self }
+    pub fn with_merge_number(self, merge_number: Option<usize>) -> Self {
+        Self {
+            merge_number,
+            ..self
+        }
     }
 
     /// Sets compression.
@@ -281,6 +284,7 @@ impl BatchProducerBuilder {
     {
         BatchProducer {
             linger: self.linger,
+            merge_number: self.merge_number,
             compression: self.compression,
             client: self.client,
             inner: Arc::new(Mutex::new(ProducerInner {
@@ -325,6 +329,8 @@ where
     A: aggregator::Aggregator,
 {
     linger: Duration,
+
+    merge_number: Option<usize>,
 
     compression: Compression,
 
@@ -401,8 +407,13 @@ where
                 TryPush::NoCapacity(data) => {
                     debug!(client=?self.client, "Insufficient capacity in aggregator - flushing");
 
-                    let mut inner =
-                        Self::flush_impl(inner, Arc::clone(&self.client), self.compression).await?;
+                    let mut inner = Self::flush_impl(
+                        inner,
+                        Arc::clone(&self.client),
+                        self.compression,
+                        self.merge_number,
+                    )
+                    .await?;
 
                     match inner
                         .aggregator
@@ -440,7 +451,13 @@ where
         debug!(client=?self.client, ?tag, "Linger expired - flushing");
 
         // Flush data
-        Self::flush_impl(inner, Arc::clone(&self.client), self.compression).await?;
+        Self::flush_impl(
+            inner,
+            Arc::clone(&self.client),
+            self.compression,
+            self.merge_number,
+        )
+        .await?;
 
         extract(result_slot.peek().expect("just flushed"), tag)
     }
@@ -449,7 +466,13 @@ where
     pub async fn flush(&self) -> Result<()> {
         let inner = self.lock().await;
         debug!(client=?self.client, "Manual flush");
-        Self::flush_impl(inner, Arc::clone(&self.client), self.compression).await?;
+        Self::flush_impl(
+            inner,
+            Arc::clone(&self.client),
+            self.compression,
+            self.merge_number,
+        )
+        .await?;
         Ok(())
     }
 
@@ -459,6 +482,7 @@ where
         mut inner: OwnedMutexGuard<ProducerInner<A>>,
         client: Arc<dyn ProducerClient>,
         compression: Compression,
+        merge_number: Option<usize>,
     ) -> Result<OwnedMutexGuard<ProducerInner<A>>> {
         debug!(?client, "Flushing batch producer");
 
@@ -478,24 +502,27 @@ where
                 }
             };
 
-            // let chats_batch: HashMap<String,
-            let mut value_batch = vec![];
-            let timestamp = output
-                .last()
-                .map(|one| one.timestamp)
-                .unwrap_or_else(|| time::OffsetDateTime::now_utc());
-            for one in output {
-                value_batch.push(one.value);
-            }
+            // TODO: handle merge number & pack batch for each chat
+            if let Some(_merge_number) = merge_number {
+                // // let chats_batch: HashMap<String,
+                // let mut value_batch = vec![];
+                // let timestamp = output
+                //     .last()
+                //     .map(|one| one.timestamp)
+                //     .unwrap_or_else(|| time::OffsetDateTime::now_utc());
+                // for one in output {
+                //     value_batch.push(one.value);
+                // }
 
-            let value_batch = serde_json::to_vec(&value_batch).ok();
-            let output = Record {
-                key: None,
-                value: value_batch,
-                headers: std::collections::BTreeMap::new(),
-                timestamp,
-            };
-            let output = vec![output];
+                // let value_batch = serde_json::to_vec(&value_batch).ok();
+                // let output = Record {
+                //     key: None,
+                //     value: value_batch,
+                //     headers: std::collections::BTreeMap::new(),
+                //     timestamp,
+                // };
+                // output = vec![output];
+            }
 
             let r = if output.is_empty() {
                 debug!(?client, "No data aggregated, skipping client request");

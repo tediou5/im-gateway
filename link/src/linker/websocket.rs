@@ -19,14 +19,15 @@ pub(crate) async fn process(
             let len = messages.len() as u64;
 
             for message in messages.iter() {
-                let messages = serde_json::to_string(&message).unwrap();
+                // WebSocket only use Message.Content
+                let messages = serde_json::to_string(&message.content).unwrap();
                 match write.send(axum::extract::ws::Message::Text(messages)).await {
                     Ok(()) => {
-                        crate::axum_handler::TCP_SEND_COUNT
+                        crate::axum_handler::LINK_SEND_COUNT
                             .fetch_add(len, std::sync::atomic::Ordering::Relaxed);
                     }
                     Err(e) => {
-                        tracing::error!("tcp send error: {e:?}");
+                        tracing::error!("websocket send error: {e:?}");
                         break;
                     }
                 };

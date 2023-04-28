@@ -2,12 +2,17 @@
 port = 10001
 auth = "http://192.168.0.231:10804/v1/rest/merchant/user/parseToken"
 
+[http]
+port = 4855
+websocket_router = "/im"
+
 [kafka]
 addrs = ["192.168.0.93:9092", "192.168.0.93:9093", "192.168.0.93:9094"]
 # addrs = ["172.28.140.237:9092"]
 
 [kafka.producer]
 linger = 10
+merge_number = 10
 max_batch_size = 52_428_800
 business_topic = "im-session-link"
 business_partition = 0

@@ -20,7 +20,7 @@ pub(crate) async fn process(stream: tokio::net::TcpStream) {
 
         match write.send(messages).await {
             Ok(()) => {
-                crate::axum_handler::TCP_SEND_COUNT
+                crate::axum_handler::LINK_SEND_COUNT
                     .fetch_add(len, std::sync::atomic::Ordering::Relaxed);
             }
             Err(e) => {

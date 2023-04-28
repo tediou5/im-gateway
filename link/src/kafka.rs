@@ -72,6 +72,11 @@ impl Client {
             producer = producer.with_linger(Duration::from_millis(linger));
         }
 
+        if let Some(merge_number) = config.producer.merge_number {
+            // TODO: set merge number
+            let _ = merge_number;
+        }
+
         let producer = producer.build(RecordAggregator::new(
             config.producer.max_batch_size, // maximum bytes
         ));

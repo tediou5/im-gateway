@@ -1,6 +1,7 @@
 #[derive(serde_derive::Deserialize, Debug, Clone)]
 pub(crate) struct Config {
     pub(crate) tcp: Tcp,
+    pub(crate) http: Http,
     pub(crate) kafka: Kafka,
     pub(crate) redis: Redis,
 }
@@ -23,6 +24,12 @@ pub(crate) struct Tcp {
 }
 
 #[derive(serde_derive::Deserialize, Debug, Clone)]
+pub(crate) struct Http {
+    pub(crate) port: u16,
+    pub(crate) websocket_router: String,
+}
+
+#[derive(serde_derive::Deserialize, Debug, Clone)]
 pub(crate) struct Redis {
     pub(crate) addrs: String,
 }
@@ -37,6 +44,7 @@ pub(crate) struct Kafka {
 #[derive(serde_derive::Deserialize, Debug, Clone)]
 pub(crate) struct Producer {
     pub(crate) linger: Option<u64>,
+    pub(crate) merge_number: Option<u64>,
     pub(crate) max_batch_size: usize,
     pub(crate) business_topic: String,
     pub(crate) business_partition: i32,

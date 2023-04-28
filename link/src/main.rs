@@ -73,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
                     .inspect_err(|e| tracing::error!("consumed record error: {e}"));
 
                 if let Ok(message) = message {
-                    tracing::debug!("consume message: \n{message:?}\n------ end ------");
+                    tracing::error!("consume message: \n{message:?}\n------ end ------");
                     match message {
                         kafka::Message::Private(recv, message) => {
                             if let Err(_e) = tx.send(event_loop::Event::Send(recv, message)) {
@@ -107,7 +107,7 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::task::spawn(async {
         tracing::error!("running http server");
-        axum_handler::run().await;
+        axum_handler::run(config.http).await;
     });
 
     tracing::error!("handle tcp connect");
