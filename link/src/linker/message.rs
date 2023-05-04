@@ -176,6 +176,19 @@ impl From<Message> for rskafka::record::Record {
 
 const MAX: usize = 8 * 1024 * 1024;
 
+impl tokio_util::codec::Encoder<std::sync::Arc<Vec<u8>>> for MessageCodec {
+    type Error = std::io::Error;
+
+    fn encode(
+        &mut self,
+        item: std::sync::Arc<Vec<u8>>,
+        dst: &mut bytes::BytesMut,
+    ) -> Result<(), Self::Error> {
+        dst.extend(item.iter());
+        Ok(())
+    }
+}
+
 impl tokio_util::codec::Encoder<std::sync::Arc<Vec<Message>>> for MessageCodec {
     type Error = std::io::Error;
 

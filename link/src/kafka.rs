@@ -1,4 +1,4 @@
-pub(crate) use message::{Message, chat::Action};
+pub(crate) use message::{chat::Action, Message};
 
 mod message;
 #[derive(Debug)]

@@ -24,7 +24,7 @@ pub(crate) async fn process(stream: tokio::net::TcpStream) {
                     .fetch_add(len, std::sync::atomic::Ordering::Relaxed);
             }
             Err(e) => {
-                tracing::error!("tcp send error: {e:?}");
+                tracing::debug!("tcp send error: {e:?}");
                 break;
             }
         };

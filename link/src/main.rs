@@ -73,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
                     .inspect_err(|e| tracing::error!("consumed record error: {e}"));
 
                 if let Ok(message) = message {
-                    tracing::error!("consume message: \n{message:?}\n------ end ------");
+                    tracing::debug!("consume message: \n{message:?}\n------ end ------");
                     match message {
                         kafka::Message::Private(recv, message) => {
                             if let Err(_e) = tx.send(event_loop::Event::Send(recv, message)) {
@@ -91,10 +91,14 @@ async fn main() -> anyhow::Result<()> {
                             };
                         }
                         kafka::Message::Chat(kafka::Action::Join(chat, users)) => {
-                            // TODO:
+                            if let Err(_e) = tx.send(event_loop::Event::Join(chat, users)) {
+                                // FIXME: handle error
+                            };
                         }
                         kafka::Message::Chat(kafka::Action::Leave(chat, users)) => {
-                            // TODO:
+                            if let Err(_e) = tx.send(event_loop::Event::Leave(chat, users)) {
+                                // FIXME: handle error
+                            };
                         }
                     }
                 };

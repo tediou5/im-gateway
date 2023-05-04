@@ -15,11 +15,11 @@ pub(crate) static LAST_COUNT_TIMESTAMP: Lazy<AtomicU64> = Lazy::new(|| AtomicU64
 pub(crate) static LAST_REQUEST_COUNT: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
 pub(crate) static LAST_RESPONSE_COUNT: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
 
-#[derive(Debug, Clone, serde_derive::Deserialize, serde_derive::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde_derive::Deserialize, serde_derive::Serialize)]
 #[serde(untagged)]
 pub(crate) enum LinkProtocol {
-    Privite(
-        String,                                               /* recv */
+    Private(
+        std::collections::HashSet<String>,                    /* recvs */
         std::collections::HashMap<String, serde_json::Value>, /* content */
     ),
     Group(
@@ -71,12 +71,19 @@ pub(crate) async fn send_message(Json(proto): Json<LinkProtocol>) -> Response {
     };
 
     let linkers = match &proto {
-        LinkProtocol::Privite(..) => {
+        LinkProtocol::Private(recvs, ..)
+        | LinkProtocol::Chat(chat::Action::Join(.., recvs)) => {
             // FIXME: select the linker service by hashring.
+            if recvs.is_empty() {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "recvs must not empty".to_string(),
+                )
+                    .into_response();
+            }
             redis.get_linkers().await
         }
-        LinkProtocol::Group(chat, ..)
-        | LinkProtocol::Chat(chat::Action::Join(chat, ..))
+        LinkProtocol::Group(chat, ..) /* FIXME: additional should send like Private Message */
         | LinkProtocol::Chat(chat::Action::Leave(chat, ..)) => {
             redis.get_router(chat.as_str()).await
         }
@@ -87,7 +94,7 @@ pub(crate) async fn send_message(Json(proto): Json<LinkProtocol>) -> Response {
         Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     };
 
-    tracing::error!("produce into: {linkers:?}\nmessage: {proto:?}");
+    tracing::debug!("produce into: {linkers:?}\nmessage: {proto:?}");
 
     for linker in linkers {
         if let Err(e) = producer.produce(linker, proto.clone()).await {
@@ -193,46 +200,40 @@ pub(super) async fn run(config: crate::config::Http) {
 }
 
 pub(crate) mod chat {
-    #[derive(Debug, Clone, serde_derive::Deserialize, serde_derive::Serialize)]
+    #[derive(Debug, Clone, PartialEq, serde_derive::Deserialize, serde_derive::Serialize)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum Action {
-        Join(String, Vec<String>),
-        Leave(String, Vec<String>),
+        Join(String, std::collections::HashSet<String>),
+        Leave(String, std::collections::HashSet<String>),
     }
 }
 
 #[cfg(test)]
 mod test {
+    use std::collections::HashSet;
+
     use super::{chat::Action, LinkProtocol};
 
     #[test]
     fn proto_json() {
         let join = LinkProtocol::Chat(Action::Join(
             "cc_1".to_string(),
-            vec!["uu_1".to_string(), "uu_2".to_string()],
+            HashSet::from_iter(["uu_1".to_string(), "uu_2".to_string()]),
         ));
 
-        let join = serde_json::to_string(&join).unwrap();
+        let join_from_json: LinkProtocol =
+            serde_json::from_str(r#"{"join": ["cc_1", ["uu_1", "uu_2"]]}"#).unwrap();
 
-        let join_json = serde_json::json!({
-            "join": ["cc_1", ["uu_1", "uu_2"]]
-        })
-        .to_string();
-
-        assert_eq!(join, join_json);
+        assert_eq!(join, join_from_json);
 
         let leave = LinkProtocol::Chat(Action::Leave(
             "cc_1".to_string(),
-            vec!["uu_1".to_string(), "uu_2".to_string()],
+            HashSet::from_iter(["uu_1".to_string(), "uu_2".to_string()]),
         ));
 
-        let leave = serde_json::to_string(&leave).unwrap();
+        let leave_from_json: LinkProtocol =
+            serde_json::from_str(r#"{"leave": ["cc_1", ["uu_1", "uu_2"]]}"#).unwrap();
 
-        let leave_json = serde_json::json!({
-            "leave": ["cc_1", ["uu_1", "uu_2"]]
-        })
-        .to_string();
-
-        assert_eq!(leave, leave_json)
+        assert_eq!(leave, leave_from_json)
     }
 }

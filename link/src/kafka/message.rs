@@ -3,7 +3,10 @@ use crate::linker;
 #[derive(Debug, Clone, serde_derive::Serialize, serde_derive::Deserialize)]
 #[serde(untagged)]
 pub(crate) enum Message {
-    Private(String /* recv */, linker::Message),
+    Private(
+        std::collections::HashSet<String>, /* recvs */
+        linker::Message,
+    ),
     Group(
         String,                            /* chat */
         std::collections::HashSet<String>, /* exclusions */
@@ -33,13 +36,17 @@ impl TryFrom<rskafka::record::Record> for Message {
         #[derive(Debug, Clone, serde_derive::Serialize, serde_derive::Deserialize)]
         #[serde(untagged)]
         pub(crate) enum TempMessage {
-            Private(String /* recv */, serde_json::Value),
+            Private(
+                std::collections::HashSet<String>, /* recvs */
+                serde_json::Value,
+            ),
             Group(
                 String,                            /* chat */
                 std::collections::HashSet<String>, /* exclusions */
                 std::collections::HashSet<String>, /* additional */
                 serde_json::Value,
             ),
+            Chat(chat::Action),
         }
         let rskafka::record::Record { value, .. } = value;
         let value = String::from_utf8(value.ok_or(anyhow::anyhow!("value is empty"))?)?;
@@ -49,6 +56,7 @@ impl TryFrom<rskafka::record::Record> for Message {
             TempMessage::Private(_, temp_message) | TempMessage::Group(.., temp_message) => {
                 temp_message.clone()
             }
+            TempMessage::Chat(action) => return Ok(Message::Chat(action.clone())),
         };
         let message = temp_message.try_into()?;
 
@@ -57,6 +65,7 @@ impl TryFrom<rskafka::record::Record> for Message {
             TempMessage::Group(chat, exclusions, additional, _) => {
                 Message::Group(chat, exclusions, additional, message)
             }
+            TempMessage::Chat(_) => panic!("wtf"),
         };
         Ok(message)
     }
@@ -66,7 +75,7 @@ pub(crate) mod chat {
     #[derive(Debug, Clone, serde_derive::Deserialize, serde_derive::Serialize)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum Action {
-        Join(String, Vec<String>),
-        Leave(String, Vec<String>),
+        Join(String, std::collections::HashSet<String>),
+        Leave(String, std::collections::HashSet<String>),
     }
 }
