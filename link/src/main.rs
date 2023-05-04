@@ -90,6 +90,12 @@ async fn main() -> anyhow::Result<()> {
                                 // FIXME: handle error
                             };
                         }
+                        kafka::Message::Chat(kafka::Action::Join(chat, users)) => {
+                            // TODO:
+                        }
+                        kafka::Message::Chat(kafka::Action::Leave(chat, users)) => {
+                            // TODO:
+                        }
                     }
                 };
             })

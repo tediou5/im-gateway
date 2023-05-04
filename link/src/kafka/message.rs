@@ -10,6 +10,7 @@ pub(crate) enum Message {
         std::collections::HashSet<String>, /* additional */
         linker::Message,
     ),
+    Chat(chat::Action),
 }
 
 impl From<Message> for rskafka::record::Record {
@@ -58,5 +59,14 @@ impl TryFrom<rskafka::record::Record> for Message {
             }
         };
         Ok(message)
+    }
+}
+
+pub(crate) mod chat {
+    #[derive(Debug, Clone, serde_derive::Deserialize, serde_derive::Serialize)]
+    #[serde(rename_all = "snake_case")]
+    pub(crate) enum Action {
+        Join(String, Vec<String>),
+        Leave(String, Vec<String>),
     }
 }

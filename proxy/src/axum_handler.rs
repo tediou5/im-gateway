@@ -28,9 +28,7 @@ pub(crate) enum LinkProtocol {
         std::collections::HashSet<String>,                    /* additional */
         std::collections::HashMap<String, serde_json::Value>, /* content */
     ),
-    Chat(
-        
-    )
+    Chat(chat::Action),
 }
 
 impl From<LinkProtocol> for rskafka::record::Record {
@@ -77,7 +75,11 @@ pub(crate) async fn send_message(Json(proto): Json<LinkProtocol>) -> Response {
             // FIXME: select the linker service by hashring.
             redis.get_linkers().await
         }
-        LinkProtocol::Group(chat, ..) => redis.get_router(chat.as_str()).await,
+        LinkProtocol::Group(chat, ..)
+        | LinkProtocol::Chat(chat::Action::Join(chat, ..))
+        | LinkProtocol::Chat(chat::Action::Leave(chat, ..)) => {
+            redis.get_router(chat.as_str()).await
+        }
     };
 
     let linkers = match linkers {
@@ -187,5 +189,50 @@ pub(super) async fn run(config: crate::config::Http) {
     let server = axum::Server::bind(&addr).serve(app.into_make_service());
     if let Err(err) = server.await {
         panic!("server error: {}", err)
+    }
+}
+
+pub(crate) mod chat {
+    #[derive(Debug, Clone, serde_derive::Deserialize, serde_derive::Serialize)]
+    #[serde(rename_all = "snake_case")]
+    pub(crate) enum Action {
+        Join(String, Vec<String>),
+        Leave(String, Vec<String>),
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{chat::Action, LinkProtocol};
+
+    #[test]
+    fn proto_json() {
+        let join = LinkProtocol::Chat(Action::Join(
+            "cc_1".to_string(),
+            vec!["uu_1".to_string(), "uu_2".to_string()],
+        ));
+
+        let join = serde_json::to_string(&join).unwrap();
+
+        let join_json = serde_json::json!({
+            "join": ["cc_1", ["uu_1", "uu_2"]]
+        })
+        .to_string();
+
+        assert_eq!(join, join_json);
+
+        let leave = LinkProtocol::Chat(Action::Leave(
+            "cc_1".to_string(),
+            vec!["uu_1".to_string(), "uu_2".to_string()],
+        ));
+
+        let leave = serde_json::to_string(&leave).unwrap();
+
+        let leave_json = serde_json::json!({
+            "leave": ["cc_1", ["uu_1", "uu_2"]]
+        })
+        .to_string();
+
+        assert_eq!(leave, leave_json)
     }
 }
