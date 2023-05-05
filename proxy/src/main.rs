@@ -34,34 +34,38 @@ async fn main() -> anyhow::Result<()> {
 
     let kafka = kafka::Client::new(local_addr.to_string(), config.kafka).await?;
 
-    kafka.consume(config.redis, async move |record, redis, kafka| {
-        // FIXME: handle error
-        if let Ok(proto) = record.record.try_into() {
-            let linkers = match &proto {
-                protocol::LinkProtocol::Private(recvs, ..)
-                | protocol::LinkProtocol::Chat(protocol::chat::Action::Join(.., recvs)) => {
-                    // FIXME: select the linker service by hashring.
-                    if recvs.is_empty() {
-                        None
-                    } else {
-                        redis.get_linkers().await.ok()
+    tokio::task::spawn(async {
+        kafka.consume(config.redis, async move |record, redis, kafka| {
+            tracing::error!("consumed:------------------");
+            // FIXME: handle error
+            if let Ok(proto) = record.record.try_into() {
+                tracing::error!("link protocol: \n{proto:?}\n------------------");
+                let linkers = match &proto {
+                    protocol::LinkProtocol::Private(recvs, ..)
+                    | protocol::LinkProtocol::Chat(protocol::chat::Action::Join(.., recvs)) => {
+                        // FIXME: select the linker service by hashring.
+                        if recvs.is_empty() {
+                            None
+                        } else {
+                            redis.get_linkers().await.ok()
+                        }
+                    }
+                    protocol::LinkProtocol::Group(chat, ..) /* FIXME: additional should send like Private Message */
+                    | protocol::LinkProtocol::Chat(protocol::chat::Action::Leave(chat, ..)) => {
+                        redis.get_router(chat.as_str()).await.ok()
+                    }
+                };
+
+                if let Some(linkers) = linkers {
+                    tracing::debug!("produce into: {linkers:?}\nmessage: {proto:?}");
+
+                    for linker in linkers {
+                        let _ = kafka.produce(linker, proto.clone()).await;
                     }
                 }
-                protocol::LinkProtocol::Group(chat, ..) /* FIXME: additional should send like Private Message */
-                | protocol::LinkProtocol::Chat(protocol::chat::Action::Leave(chat, ..)) => {
-                    redis.get_router(chat.as_str()).await.ok()
-                }
-            };
-
-            if let Some(linkers) = linkers {
-                tracing::debug!("produce into: {linkers:?}\nmessage: {proto:?}");
-
-                for linker in linkers {
-                    let _ = kafka.produce(linker, proto.clone()).await;
-                }
             }
-        }
-    }).await;
+        }).await;
+    });
 
     tracing::error!("starting consume kafka");
 
