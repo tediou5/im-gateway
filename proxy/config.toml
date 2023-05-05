@@ -12,3 +12,8 @@ addrs = "redis-cluster://:123456@192.168.0.93:7001?node=@192.168.0.93:7002&node=
 [kafka.producer]
 # linger = 10
 max_batch_size = 52_428_800
+
+[kafka.consumer]
+min_batch_size = 1
+max_batch_size = 52_428_800
+max_wait_ms = 100

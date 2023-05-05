@@ -1,5 +1,6 @@
 use fred::{pool::RedisPool, prelude::*};
 
+#[derive(Clone)]
 pub(crate) struct Client {
     inner: fred::pool::RedisPool,
 }

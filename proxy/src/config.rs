@@ -26,6 +26,7 @@ pub(crate) struct Redis {
 pub(crate) struct Kafka {
     pub(crate) addrs: Vec<String>,
     pub(crate) producer: Producer,
+    pub(crate) consumer: Consumer,
 }
 
 #[allow(dead_code)]
@@ -33,4 +34,11 @@ pub(crate) struct Kafka {
 pub(crate) struct Producer {
     pub(crate) linger: Option<u64>,
     pub(crate) max_batch_size: usize,
+}
+
+#[derive(serde_derive::Deserialize, Debug, Clone)]
+pub(crate) struct Consumer {
+    pub(crate) min_batch_size: i32,
+    pub(crate) max_batch_size: i32,
+    pub(crate) max_wait_ms: i32,
 }

@@ -1,21 +1,10 @@
-use crate::Sender;
-use ahash::AHashMap;
-
-pub(crate) enum Platform {
-    App(Sender),
-    Web(Sender),
-    PC(Sender),
-}
-
-pub(crate) struct UserConnections {
-    app: Option<Sender>,
-    web: Option<Sender>,
-    pc: Option<Sender>,
-}
-
 #[derive(Debug)]
 pub(super) enum Event {
-    Regist(String /* uid */, Vec<String> /* chats */, Sender),
+    Regist(
+        String,      /* uid */
+        Vec<String>, /* chats */
+        crate::Sender,
+    ),
     Send(
         std::collections::HashSet<String>, /* recvs */
         crate::linker::Message,
@@ -43,9 +32,9 @@ pub(super) async fn run() -> anyhow::Result<()> {
     let mut collect_rx = tokio_stream::wrappers::UnboundedReceiverStream::new(collect_rx);
     crate::EVENT_LOOP.set(collect_tx).unwrap();
 
-    let mut users: AHashMap<std::sync::Arc<String>, Sender> = AHashMap::new();
-    let mut chats: AHashMap<String, std::collections::HashSet<std::sync::Arc<String>>> =
-        AHashMap::new();
+    let mut users: ahash::AHashMap<std::sync::Arc<String>, crate::Sender> = ahash::AHashMap::new();
+    let mut chats: ahash::AHashMap<String, std::collections::HashSet<std::sync::Arc<String>>> =
+        ahash::AHashMap::new();
 
     use tokio_stream::StreamExt as _;
     while let Some(event) = collect_rx.next().await {
@@ -55,8 +44,8 @@ pub(super) async fn run() -> anyhow::Result<()> {
 }
 
 async fn _handle(
-    users: &mut AHashMap<std::sync::Arc<String>, Sender>,
-    chats: &mut AHashMap<String, std::collections::HashSet<std::sync::Arc<String>>>,
+    users: &mut ahash::AHashMap<std::sync::Arc<String>, crate::Sender>,
+    chats: &mut ahash::AHashMap<String, std::collections::HashSet<std::sync::Arc<String>>>,
     event: Event,
 ) -> anyhow::Result<()> {
     match event {
@@ -102,15 +91,13 @@ async fn _handle(
             }
         }
         Event::Join(chat, members) => {
-            tracing::error!(">>>>>> join [{chat}] <<<<<<");
+            tracing::debug!("join [{chat}]");
             let members = _join(users, members);
             if !members.is_empty() {
                 let online = chats.entry(chat.clone()).or_default();
                 if online.is_empty() {
                     if let Some(redis_client) = crate::REDIS_CLIENT.get() {
-                        tracing::error!(
-                            "--------->>>>>>>>>>>>>>>>>>>>>>>>>\nadd [{chat}] into router"
-                        );
+                        tracing::debug!("add [{chat}] into router");
                         redis_client
                             .regist(&vec![chat])
                             .await
@@ -132,7 +119,7 @@ async fn _handle(
 }
 
 fn _join(
-    users: &mut AHashMap<std::sync::Arc<String>, Sender>,
+    users: &mut ahash::AHashMap<std::sync::Arc<String>, crate::Sender>,
     members: std::collections::HashSet<String>,
 ) -> std::collections::HashSet<std::sync::Arc<String>> {
     let mut users_keys: std::collections::HashSet<std::sync::Arc<String>> =
@@ -150,14 +137,12 @@ fn _join(
 mod test {
     use std::{collections::HashSet, sync::Arc};
 
-    use ahash::AHashMap;
-
     use super::_join;
 
     #[test]
     fn join() {
         let (tx, _) = tokio::sync::mpsc::unbounded_channel::<crate::linker::Event>();
-        let mut users = AHashMap::from([
+        let mut users = ahash::AHashMap::from([
             (Arc::new("uu1".to_string()), tx.clone()),
             (Arc::new("uu2".to_string()), tx.clone()),
             (Arc::new("uu3".to_string()), tx.clone()),

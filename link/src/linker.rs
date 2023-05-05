@@ -11,3 +11,17 @@ pub(crate) enum Event {
     WriteBatch(std::sync::Arc<Vec<Message>>),
     Close,
 }
+
+#[allow(dead_code)]
+pub(crate) enum Platform {
+    App(crate::Sender),
+    Web(crate::Sender),
+    PC(crate::Sender),
+}
+
+#[allow(dead_code)]
+pub(crate) struct User {
+    app: Option<crate::Sender>,
+    web: Option<crate::Sender>,
+    pc: Option<crate::Sender>,
+}

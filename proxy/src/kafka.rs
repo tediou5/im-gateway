@@ -6,6 +6,7 @@ pub(crate) struct Client {
         >,
     >,
     inner: std::sync::Arc<rskafka::client::Client>,
+    local_addr: String,
     config: crate::config::Kafka,
 }
 
@@ -15,12 +16,16 @@ impl Clone for Client {
             topics: self.topics.clone(),
             inner: self.inner.clone(),
             config: self.config.clone(),
+            local_addr: self.local_addr.clone(),
         }
     }
 }
 
 impl Client {
-    pub(crate) async fn new(config: crate::config::Kafka) -> anyhow::Result<Self> {
+    pub(crate) async fn new(
+        local_addr: String,
+        config: crate::config::Kafka,
+    ) -> anyhow::Result<Self> {
         use rskafka::client::ClientBuilder;
 
         // get partition client
@@ -35,6 +40,7 @@ impl Client {
             topics: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             inner: client,
             config,
+            local_addr,
         })
     }
 
@@ -108,5 +114,34 @@ impl Client {
         });
         producer.send(message.into())?;
         Ok(())
+    }
+
+    pub(crate) async fn consume<F, U>(self, redis_config: crate::config::Redis, op: F)
+    where
+        F: Fn(rskafka::record::RecordAndOffset, crate::redis::Client, Client) -> U,
+        U: std::future::Future<Output = ()>,
+    {
+        use futures::StreamExt;
+        use rskafka::client::consumer::{StartOffset, StreamConsumerBuilder};
+
+        let partition_client = self
+            .inner
+            .partition_client(format!("proxy:{}", self.local_addr), 0)
+            .unwrap();
+
+        // construct stream consumer
+        let mut stream = StreamConsumerBuilder::new(partition_client.into(), StartOffset::Latest)
+            .with_min_batch_size(self.config.consumer.min_batch_size)
+            .with_max_batch_size(self.config.consumer.max_batch_size)
+            .with_max_wait_ms(self.config.consumer.max_wait_ms)
+            .build();
+
+        // consume data
+        let redis = crate::redis::Client::new(redis_config.addrs).await;
+        if let Ok(redis) = redis {
+            while let Some(Ok((record, _high_water_mark))) = stream.next().await {
+                op(record, redis.clone(), self.clone() /* KafkaClient */).await
+            }
+        }
     }
 }
