@@ -124,10 +124,14 @@ impl Client {
         use futures::StreamExt;
         use rskafka::client::consumer::{StartOffset, StreamConsumerBuilder};
 
-        let partition_client = self
-            .inner
-            .partition_client(format!("proxy:{}", self.local_addr), 0)
-            .unwrap();
+        let topic = format!("proxy-{}", self.local_addr);
+
+        let controller_client = self.inner.controller_client().unwrap();
+        let _ = controller_client
+            .create_topic(topic.as_str(), 1, 1, 500)
+            .await;
+
+        let partition_client = self.inner.partition_client(topic, 0).unwrap();
 
         // construct stream consumer
         let mut stream = StreamConsumerBuilder::new(partition_client.into(), StartOffset::Latest)
