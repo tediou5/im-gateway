@@ -36,10 +36,8 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::task::spawn(async {
         kafka.consume(config.redis, async move |record, redis, kafka| {
-            tracing::error!("consumed:------------------");
             // FIXME: handle error
             if let Ok(proto) = record.record.try_into() {
-                tracing::error!("link protocol: \n{proto:?}\n------------------");
                 let linkers = match &proto {
                     protocol::LinkProtocol::Private(recvs, ..)
                     | protocol::LinkProtocol::Chat(protocol::chat::Action::Join(.., recvs)) => {
@@ -57,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
                 };
 
                 if let Some(linkers) = linkers {
-                    tracing::debug!("produce into: {linkers:?}\nmessage: {proto:?}");
+                    tracing::error!("produce into: {linkers:?}\nmessage: {proto:?}");
 
                     for linker in linkers {
                         let _ = kafka.produce(linker, proto.clone()).await;

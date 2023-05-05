@@ -62,16 +62,24 @@ async fn _handle(
             }
         }
         Event::Send(recvs, content) => {
-            let content = std::sync::Arc::new(vec![content]);
+            let content = std::sync::Arc::new(content);
             for recv in recvs {
                 if let Some(sender) = users.get(&recv) {
-                    let _ = sender.send(crate::linker::Event::WriteBatch(content.clone()));
+                    let _ = sender.send(crate::linker::Event::Write(content.clone()));
                 }
             }
         }
         Event::SendBatch(chat, exclusions, additional, message) => {
             if let Some(online) = chats.get_mut(chat.as_str()) {
-                let message = std::sync::Arc::new(message);
+                // let message = std::sync::Arc::new(message);
+
+                use tokio_util::codec::Encoder as _;
+
+                let mut codec = crate::linker::MessageCodec {};
+                let mut dst = bytes::BytesMut::new();
+                let _ = codec.encode(message, &mut dst);
+                let dst = dst.to_vec();
+                let messages = std::sync::Arc::new(dst);
 
                 let mut recv_list: std::collections::HashSet<&str> =
                     online.iter().map(|one| one.as_str()).collect();
@@ -83,9 +91,12 @@ async fn _handle(
 
                 let recv_list: std::collections::HashSet<&&str> =
                     recv_list.difference(exclusions).collect();
+
+                tracing::error!("send group message: {}", recv_list.len());
+
                 for &&recv in recv_list.iter() {
                     if let Some(sender) = users.get(&recv.to_string()) {
-                        let _ = sender.send(crate::linker::Event::WriteBatch(message.clone()));
+                        let _ = sender.send(crate::linker::Event::WriteBatch(messages.clone()));
                     };
                 }
             }

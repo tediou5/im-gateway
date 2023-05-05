@@ -64,8 +64,8 @@ impl Response {
                     let content =
                         Content::new_base_info_content(app_id, id.as_str(), timestamp, &base_info);
 
-                    let message = (id, content).into();
-                    let _ = tx.send(Event::WriteBatch(std::sync::Arc::new(vec![message])));
+                    let message: crate::linker::Message = (id, content).into();
+                    let _ = tx.send(Event::Write(std::sync::Arc::new(message)));
                 };
             }
             _ => {

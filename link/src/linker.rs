@@ -7,8 +7,8 @@ pub(crate) mod websocket;
 
 #[derive(Debug)]
 pub(crate) enum Event {
-    // Write(std::sync::Arc<Message>),
-    WriteBatch(std::sync::Arc<Vec<Message>>),
+    Write(std::sync::Arc<Message>),
+    WriteBatch(std::sync::Arc<Vec<u8>>),
     Close,
 }
 

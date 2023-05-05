@@ -1,4 +1,4 @@
-use super::{Event, Message, MessageCodec};
+use super::{Event, MessageCodec};
 
 pub(crate) async fn process(stream: tokio::net::TcpStream) {
     // Use an unbounded channel to handle buffering and flushing of messages
@@ -12,14 +12,26 @@ pub(crate) async fn process(stream: tokio::net::TcpStream) {
     use futures::SinkExt as _;
     use tokio_stream::StreamExt as _;
     while let Some(text) = rx.next().await {
-        let messages = match text {
+        let res = match text {
             Event::Close => break,
-            Event::WriteBatch(messages) => messages,
-        };
-        let len = messages.len() as u64;
+            Event::WriteBatch(messages) => {
+                let len = messages.len() as u64;
+                write.send(messages).await.map(|_| len)
+            }
+            Event::Write(message) => {
+                use tokio_util::codec::Encoder as _;
 
-        match write.send(messages).await {
-            Ok(()) => {
+                let mut codec = crate::linker::MessageCodec {};
+                let mut dst = bytes::BytesMut::new();
+                let _ = codec.encode(message.as_ref(), &mut dst);
+                let message = dst.to_vec();
+
+                write.send(message.into()).await.map(|_| 1)
+            },
+        };
+
+        match res {
+            Ok(len) => {
                 crate::axum_handler::LINK_SEND_COUNT
                     .fetch_add(len, std::sync::atomic::Ordering::Relaxed);
             }
@@ -37,7 +49,7 @@ fn handle(
     tx: crate::Sender,
 ) -> futures::stream::SplitSink<
     tokio_util::codec::Framed<tokio::net::TcpStream, MessageCodec>,
-    std::sync::Arc<Vec<Message>>,
+    std::sync::Arc<Vec<u8>>,
 > {
     use futures::StreamExt as _;
     use tokio_util::codec::Decoder as _;

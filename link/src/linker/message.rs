@@ -189,12 +189,12 @@ impl tokio_util::codec::Encoder<std::sync::Arc<Vec<u8>>> for MessageCodec {
     }
 }
 
-impl tokio_util::codec::Encoder<std::sync::Arc<Vec<Message>>> for MessageCodec {
+impl tokio_util::codec::Encoder<Vec<Message>> for MessageCodec {
     type Error = std::io::Error;
 
     fn encode(
         &mut self,
-        items: std::sync::Arc<Vec<Message>>,
+        items: Vec<Message>,
         dst: &mut bytes::BytesMut,
     ) -> Result<(), Self::Error> {
         for item in items.iter() {

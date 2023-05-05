@@ -128,9 +128,9 @@ async fn main() -> anyhow::Result<()> {
             use std::sync::atomic::Ordering::Relaxed;
 
             // Process each socket concurrently.
-            axum_handler::TCP_COUNT.fetch_add(1, Relaxed);
+            axum_handler::LINK_COUNT.fetch_add(1, Relaxed);
             linker::tcp::process(stream).await;
-            axum_handler::TCP_COUNT.fetch_sub(1, Relaxed);
+            axum_handler::LINK_COUNT.fetch_sub(1, Relaxed);
         });
     }
     Ok(())

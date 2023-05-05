@@ -113,6 +113,7 @@ impl Client {
             )
         });
         producer.send(message.into())?;
+        crate::axum_handler::PRODUCE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -144,6 +145,7 @@ impl Client {
         let redis = crate::redis::Client::new(redis_config.addrs).await;
         if let Ok(redis) = redis {
             while let Some(Ok((record, _high_water_mark))) = stream.next().await {
+                crate::axum_handler::CONSUME_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 op(record, redis.clone(), self.clone() /* KafkaClient */).await
             }
         }

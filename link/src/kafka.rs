@@ -103,7 +103,9 @@ impl Client {
         >,
         message: M,
     ) {
-        producer.produce(message.into()).await.unwrap();
+        if let Err(e) = producer.produce(message.into()).await {
+            tracing::error!("Kafka Produce error: {e:?}")
+        };
     }
 
     pub(crate) async fn consume<F, U>(self, op: F)
@@ -139,6 +141,7 @@ impl Client {
         M: Into<rskafka::record::Record> + std::fmt::Debug,
     {
         tracing::debug!("kafka produce: {message:?}");
+        crate::axum_handler::SEND_REQUEST_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.bussiness_client.send(message.into())?;
         Ok(())
     }

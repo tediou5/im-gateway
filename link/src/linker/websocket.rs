@@ -12,26 +12,27 @@ pub(crate) async fn process(
         use futures::StreamExt as _;
 
         while let Some(event) = rx.next().await {
-            let messages = match event {
-                Event::Close => break,
-                Event::WriteBatch(messages) => messages,
-            };
-            let len = messages.len() as u64;
+            // FIXME:
+            // let messages = match event {
+            //     Event::Close => break,
+            //     Event::WriteBatch(messages) => messages,
+            // };
+            // let len = messages.len() as u64;
 
-            for message in messages.iter() {
-                // WebSocket only use Message.Content
-                let messages = serde_json::to_string(&message.content).unwrap();
-                match write.send(axum::extract::ws::Message::Text(messages)).await {
-                    Ok(()) => {
-                        crate::axum_handler::LINK_SEND_COUNT
-                            .fetch_add(len, std::sync::atomic::Ordering::Relaxed);
-                    }
-                    Err(e) => {
-                        tracing::error!("websocket send error: {e:?}");
-                        break;
-                    }
-                };
-            }
+            // for message in messages.iter() {
+            //     // WebSocket only use Message.Content
+            //     let messages = serde_json::to_string(&message.content).unwrap();
+            //     match write.send(axum::extract::ws::Message::Text(messages)).await {
+            //         Ok(()) => {
+            //             crate::axum_handler::LINK_SEND_COUNT
+            //                 .fetch_add(len, std::sync::atomic::Ordering::Relaxed);
+            //         }
+            //         Err(e) => {
+            //             tracing::error!("websocket send error: {e:?}");
+            //             break;
+            //         }
+            //     };
+            // }
         }
 
         // TODO:
