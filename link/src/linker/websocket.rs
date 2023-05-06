@@ -36,15 +36,13 @@ pub(crate) async fn process(
             };
 
             for content in contents.iter() {
-                tracing::error!(
-                    "++++++++++++++++++\nwebsocket wait for send: {content:?}\n++++++++++++++++++"
-                );
+                tracing::debug!("\nwebsocket wait for send: {content:?}\n++++++++++++++++++");
                 match write
                     .send(axum::extract::ws::Message::Text(content.to_string()))
                     .await
                 {
                     Ok(()) => {
-                        tracing::error!("websocket send ok");
+                        tracing::debug!("websocket send ok");
                         crate::axum_handler::LINK_SEND_COUNT
                             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
@@ -82,15 +80,17 @@ fn handle(
                     // if let Ok(message) = serde_json::from_str::<Message>(message.as_str()) {
                     if let Ok(content) = serde_json::from_str::<Content>(message.as_str()) {
                         let message: Message = content.into();
-                        let message = message.handle(|platform| {
-                            tracing::error!("platform connection: {platform:?}");
-                            match platform {
-                                "web" => Ok(super::Platform::Web(tx.clone())),
-                                _ => Err(anyhow::anyhow!("unexpected platform")),
-                            }
-                        }).await;
+                        let message = message
+                            .handle(|platform| {
+                                tracing::debug!("platform connection: {platform:?}");
+                                match platform {
+                                    "web" => Ok(super::Platform::Web(tx.clone())),
+                                    _ => Err(anyhow::anyhow!("unexpected platform")),
+                                }
+                            })
+                            .await;
 
-                        tracing::error!("handle message: {message:?}");
+                        tracing::debug!("handle message: {message:?}");
 
                         match (crate::KAFKA_CLIENT.get(), message) {
                             (Some(kafka), Ok(Some(message))) => {

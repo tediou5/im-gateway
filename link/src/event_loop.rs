@@ -39,12 +39,12 @@ pub(super) async fn run() -> anyhow::Result<()> {
 
     use tokio_stream::StreamExt as _;
     while let Some(event) = collect_rx.next().await {
-        _handle(&mut users, &mut chats, event).await?;
+        _handle(&mut users, &mut chats, event)?;
     }
     Ok(())
 }
 
-async fn _handle(
+fn _handle(
     users: &mut ahash::AHashMap<std::sync::Arc<String>, crate::linker::User>,
     chats: &mut ahash::AHashMap<String, std::collections::HashSet<std::sync::Arc<String>>>,
     event: Event,
@@ -82,13 +82,13 @@ async fn _handle(
             }
         }
         Event::Send(recv_list, content) => {
-            tracing::error!("send group message: {}", recv_list.len());
+            tracing::error!("send private message: {}", recv_list.len());
             let content = std::sync::Arc::new(content);
             for recv in recv_list {
                 if let Some(sender) = users.get_mut(&recv) {
-                    tracing::error!("send user: {recv}");
+                    tracing::debug!("send user: {recv}");
                     if let Err(_) = sender.send(content.clone()) {
-                        tracing::error!("remove user: {recv}");
+                        tracing::debug!("remove user: {recv}");
                         users.remove(&recv);
                     };
                 }
@@ -110,30 +110,40 @@ async fn _handle(
                     .try_collect()?;
                 let contents = std::sync::Arc::new(contents);
 
-                let mut recv_list: std::collections::HashSet<&str> =
-                    online.iter().map(|one| one.as_str()).collect();
-                let exclusions = &exclusions.iter().map(|exc| exc.as_str()).collect();
-                additional
-                    .iter()
-                    .map(|add| add.as_str())
-                    .collect_into(&mut recv_list);
+                // TODO: FIXME:
+                // let mut recv_list: std::collections::HashSet<&str> =
+                //     online.iter().map(|one| one.as_str()).collect();
+                // let exclusions = &exclusions.iter().map(|exc| exc.as_str()).collect();
+                // additional
+                //     .iter()
+                //     .map(|add| add.as_str())
+                //     .collect_into(&mut recv_list);
 
-                let recv_list: std::collections::HashSet<&&str> =
-                    recv_list.difference(exclusions).collect();
+                // let recv_list: std::collections::HashSet<&&str> =
+                //     recv_list.difference(exclusions).collect();
 
-                tracing::error!("send group message: {}", recv_list.len());
+                tracing::error!("send group [{}] message", online.len());
 
-                for &&recv in recv_list.iter() {
-                    let recv = recv.to_string();
-                    if let Some(sender) = users.get_mut(&recv) {
-                        tracing::error!("send user: {recv}");
-                        if let Err(_) = sender.send_batch(contents.clone(), messages_bytes.clone())
-                        {
-                            tracing::error!("remove user: {recv}");
-                            users.remove(&recv);
-                        };
-                    };
-                }
+                online.retain(|one| {
+                    if let Some(sender) = users.get_mut(one.as_ref()) &&
+                    let Err(_) = sender.send_batch(contents.clone(), messages_bytes.clone()) {
+                        tracing::debug!("remove user: {one}");
+                        users.remove(one);
+                        false
+                    } else {
+                        true
+                    }
+                });
+
+                // for recv in online.iter() {
+                //     if let Some(sender) = users.get_mut(recv.as_ref()) &&
+                //     let Err(_) = sender.send_batch(contents.clone(), messages_bytes.clone()) {
+                //         tracing::debug!("remove user: {recv}");
+                //         users.remove(recv);
+                //     };
+                // }
+            } else {
+                tracing::error!("no such chat: {chat}");
             }
         }
         Event::Join(chat, members) => {
@@ -143,11 +153,14 @@ async fn _handle(
                 let online = chats.entry(chat.clone()).or_default();
                 if online.is_empty() {
                     if let Some(redis_client) = crate::REDIS_CLIENT.get() {
-                        tracing::debug!("add [{chat}] into router");
-                        redis_client
-                            .regist(&vec![chat])
-                            .await
-                            .inspect_err(|e| tracing::error!("regist error: {e}"))?;
+                        tokio::task::spawn(async move {
+                            tracing::debug!("add [{chat}] into router");
+                            redis_client
+                                .regist(&vec![chat])
+                                .await
+                                .inspect_err(|e| tracing::error!("regist error: {e}"))?;
+                            Ok::<(), anyhow::Error>(())
+                        });
                     }
                 }
                 members.into_iter().collect_into(online);

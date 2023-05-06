@@ -2,12 +2,12 @@ echo "start server"
 
 if [ -f "./im-infra-link" ]; then
 
-    echo "start link server..."
-
     if [ -f "/tmp/link.pid" ]; then
+
+    echo "start link server..."
     kill $(cat /tmp/link.pid)
     echo "kill link process $(cat /tmp/link.pid)"
-
+    fi
 
     if [ -f "/tmp/link.log" ]; then
     rm -rf /tmp/link.log
@@ -21,9 +21,9 @@ fi
 
 if [ -f "./im-infra-proxy" ]; then
 
-    echo "start proxy server..."
-
     if [ -f "/tmp/proxy.pid" ]; then
+
+    echo "start proxy server..."
     kill $(cat /tmp/proxy.pid)
     echo "kill proxy process $(cat /tmp/proxy.pid)"
     fi

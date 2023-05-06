@@ -178,16 +178,12 @@ impl From<Message> for rskafka::record::Record {
     }
 }
 
-const MAX: usize = 8 * 1024 * 1024;
+// const MAX: usize = 8 * 1024 * 1024;
 
-impl tokio_util::codec::Encoder<std::sync::Arc<Vec<u8>>> for MessageCodec {
+impl tokio_util::codec::Encoder<Vec<u8>> for MessageCodec {
     type Error = std::io::Error;
 
-    fn encode(
-        &mut self,
-        item: std::sync::Arc<Vec<u8>>,
-        dst: &mut bytes::BytesMut,
-    ) -> Result<(), Self::Error> {
+    fn encode(&mut self, item: Vec<u8>, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
         dst.extend(item.iter());
         Ok(())
     }
@@ -215,12 +211,12 @@ impl tokio_util::codec::Encoder<&Message> for MessageCodec {
     fn encode(&mut self, item: &Message, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
         let content_vec: Vec<u8> = serde_json::to_vec(&item.content).unwrap();
         let length = content_vec.len() as i32;
-        if 44 + length as usize > MAX {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Frame of content length {} is too large.", length),
-            ));
-        }
+        // if 44 + length as usize > MAX {
+        //     return Err(std::io::Error::new(
+        //         std::io::ErrorKind::InvalidData,
+        //         format!("Frame of content length {} is too large.", length),
+        //     ));
+        // }
         let len_bytes = i32::to_be_bytes(length);
 
         let timestamp = if item.timestamp == 0 {
@@ -264,12 +260,12 @@ impl tokio_util::codec::Decoder for MessageCodec {
 
         // Check that the length is not too large to avoid a denial of
         // service attack where the server runs out of memory.
-        if length_usize > MAX {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Frame of length {} is too large.", length),
-            ));
-        }
+        // if length_usize > MAX {
+        //     return Err(std::io::Error::new(
+        //         std::io::ErrorKind::InvalidData,
+        //         format!("Frame of length {} is too large.", length),
+        //     ));
+        // }
 
         if src.len() < 44 + length_usize {
             // The full string has not yet arrived.

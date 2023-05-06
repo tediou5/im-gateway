@@ -1,5 +1,9 @@
 [workspace]
-members = ["link/", "proxy/", "rskafka/"]
+members = [
+    "link/",
+    "proxy/",
+    # "rskafka/"
+]
 
 [profile.dev]
 codegen-units = 4

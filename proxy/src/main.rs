@@ -55,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
                 };
 
                 if let Some(linkers) = linkers {
-                    tracing::error!("produce into: {linkers:?}\nmessage: {proto:?}");
+                    tracing::debug!("produce into: {linkers:?}\nmessage: {proto:?}");
 
                     for linker in linkers {
                         let _ = kafka.produce(linker, proto.clone()).await;

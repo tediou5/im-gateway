@@ -83,7 +83,7 @@ impl User {
         };
 
         if let Some(sender) = self.pc.as_ref() &&
-        let Err(_) = sender.send(tcp::Event::WriteBatch(messages_bytes.clone())) {
+        let Err(_) = sender.send(tcp::Event::WriteBatch(messages_bytes)) {
             self.pc = None;
         };
 

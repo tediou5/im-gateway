@@ -43,11 +43,7 @@ pub(super) struct Response {
 }
 
 impl Response {
-    pub(super) async fn check(
-        self,
-        app_id: &str,
-        platform: super::Platform,
-    ) -> anyhow::Result<()> {
+    pub(super) async fn check(self, app_id: &str, platform: super::Platform) -> anyhow::Result<()> {
         if let "0" = self.code.as_str() &&
         let Some(Data { base_info, chats }) = self.data &&
         let Some(redis_client) = crate::REDIS_CLIENT.get() &&

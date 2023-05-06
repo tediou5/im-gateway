@@ -42,6 +42,8 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
+    tracing::error!("version: 2023/5/6-17:44");
+
     let local_addr = socket_addr::ipv4::local_addr().await?;
     tracing::error!("local addr: {local_addr:?}");
 
@@ -74,14 +76,16 @@ async fn main() -> anyhow::Result<()> {
                     .inspect_err(|e| tracing::error!("consumed record error: {e}"));
 
                 if let Ok(message) = message {
-                    tracing::error!("consume message: \n{message:?}\n------ end ------");
+                    tracing::debug!("consume message: \n{message:?}\n------ end ------");
                     match message {
                         kafka::Message::Private(recv, message) => {
+                            tracing::error!("consumed private message: {recv:?}");
                             if let Err(_e) = tx.send(event_loop::Event::Send(recv, message)) {
                                 // FIXME: handle error
                             };
                         }
                         kafka::Message::Group(chat, exclusions, additional, message) => {
+                            tracing::error!("consumed group message: {chat:?} - {exclusions:?} + {additional:?}");
                             if let Err(_e) = tx.send(event_loop::Event::SendBatch(
                                 chat,
                                 exclusions,
@@ -124,7 +128,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::error!("handle tcp connect");
     while let Ok((stream, _)) = tcp_listener.accept().await {
         // FIXME:
-        // stream.set_nodelay(true)?;
+        stream.set_nodelay(true)?;
         tokio::spawn(async move {
             use std::sync::atomic::Ordering::Relaxed;
 
