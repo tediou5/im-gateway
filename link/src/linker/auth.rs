@@ -1,4 +1,4 @@
-use super::{Content, Event};
+use super::Content;
 
 pub(super) async fn auth(app_id: &str, token: &str, platform: &str) -> anyhow::Result<Response> {
     let auth_url = crate::AUTH_URL
@@ -43,38 +43,39 @@ pub(super) struct Response {
 }
 
 impl Response {
-    pub(super) async fn check(self, app_id: &str, tx: &crate::Sender) -> anyhow::Result<()> {
-        match self.code.as_str() {
-            "0" => {
-                if let Some(Data { base_info, chats }) = self.data &&
-                let Some(redis_client) = crate::REDIS_CLIENT.get() &&
-                let Some(event_loop) = crate::EVENT_LOOP.get() &&
-                let Ok(_) = redis_client.regist(&chats).await &&
-                let Ok(_) = event_loop.send(crate::event_loop::Event::Regist(
-                    base_info.pin.clone(),
-                    chats,
-                    tx.clone(),
-                )) {
-                    let id = uuid::Uuid::new_v4().to_string();
-                    let timestamp = std::time::SystemTime::now()
-                        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs() as i64;
+    pub(super) async fn check(
+        self,
+        app_id: &str,
+        platform: super::Platform,
+    ) -> anyhow::Result<()> {
+        if let "0" = self.code.as_str() &&
+        let Some(Data { base_info, chats }) = self.data &&
+        let Some(redis_client) = crate::REDIS_CLIENT.get() &&
+        let Some(event_loop) = crate::EVENT_LOOP.get() &&
+        let Ok(_) = redis_client.regist(&chats).await &&
+        let Ok(_) = event_loop.send(crate::event_loop::Event::Regist(
+            base_info.pin.clone(),
+            chats,
+            platform.clone(),
+        )) {
+            let id = uuid::Uuid::new_v4().to_string();
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
 
-                    let content =
-                        Content::new_base_info_content(app_id, id.as_str(), timestamp, &base_info);
+            let content =
+                Content::new_base_info_content(app_id, id.as_str(), timestamp, &base_info);
 
-                    let message: crate::linker::Message = (id, content).into();
-                    let _ = tx.send(Event::Write(std::sync::Arc::new(message)));
-                };
-            }
-            _ => {
-                // Authorization Error, close connection
+            let message: crate::linker::Message = (id, content).into();
+            let _ = platform.send_one(std::sync::Arc::new(message));
+            Ok(())
+        } else {
+            // Authorization Error, close connection
                 // FIXME: send error message to client and close connection
-                let _ = tx.send(Event::Close);
-                return Err(anyhow::anyhow!("Authorization Error"));
-            }
+                tracing::error!("Authorization Error");
+                let _ = platform.close();
+                Err(anyhow::anyhow!("Authorization Error"))
         }
-        Ok(())
     }
 }

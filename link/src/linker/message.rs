@@ -63,7 +63,10 @@ pub(crate) struct Message {
 }
 
 impl Message {
-    pub(super) async fn handle(self, tx: &crate::Sender) -> anyhow::Result<Option<Self>> {
+    pub(super) async fn handle<F>(self, platform_op: F) -> anyhow::Result<Option<Self>>
+    where
+        F: Fn(&str) -> anyhow::Result<super::Platform>,
+    {
         let Message { content, .. } = &self;
 
         match content {
@@ -76,9 +79,10 @@ impl Message {
                 token,
                 platform,
             } => {
+                let sender = platform_op(platform.to_lowercase().as_str())?;
                 auth::auth(app_id.as_str(), token.as_str(), platform.as_str())
                     .await?
-                    .check(app_id, tx)
+                    .check(app_id, sender)
                     .await?;
                 Ok(None)
             }
@@ -189,12 +193,12 @@ impl tokio_util::codec::Encoder<std::sync::Arc<Vec<u8>>> for MessageCodec {
     }
 }
 
-impl tokio_util::codec::Encoder<Vec<Message>> for MessageCodec {
+impl tokio_util::codec::Encoder<&Vec<Message>> for MessageCodec {
     type Error = std::io::Error;
 
     fn encode(
         &mut self,
-        items: Vec<Message>,
+        items: &Vec<Message>,
         dst: &mut bytes::BytesMut,
     ) -> Result<(), Self::Error> {
         for item in items.iter() {

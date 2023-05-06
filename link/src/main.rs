@@ -1,9 +1,10 @@
 #![feature(
     let_chains,
-    result_option_inspect,
     async_closure,
+    iter_collect_into,
+    iterator_try_collect,
     string_remove_matches,
-    iter_collect_into
+    result_option_inspect
 )]
 
 mod axum_handler;
@@ -26,7 +27,7 @@ static REDIS_CLIENT: OnceCell<redis::Client> = OnceCell::new();
 static KAFKA_CLIENT: OnceCell<kafka::Client> = OnceCell::new();
 type TokioSender<T> = tokio::sync::mpsc::UnboundedSender<T>;
 // type TokioSender<T> = tokio::sync::mpsc::Sender<T>;
-type Sender = TokioSender<linker::Event>;
+// type Sender = TokioSender<linker::Event>;
 // type Sender = TokioSender<processor::TcpEvent>;
 
 #[derive(clap::Parser, Debug)]
@@ -73,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
                     .inspect_err(|e| tracing::error!("consumed record error: {e}"));
 
                 if let Ok(message) = message {
-                    tracing::debug!("consume message: \n{message:?}\n------ end ------");
+                    tracing::error!("consume message: \n{message:?}\n------ end ------");
                     match message {
                         kafka::Message::Private(recv, message) => {
                             if let Err(_e) = tx.send(event_loop::Event::Send(recv, message)) {

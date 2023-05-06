@@ -3,7 +3,7 @@ pub(super) enum Event {
     Regist(
         String,      /* uid */
         Vec<String>, /* chats */
-        crate::Sender,
+        crate::linker::Platform,
     ),
     Send(
         std::collections::HashSet<String>, /* recvs */
@@ -32,7 +32,8 @@ pub(super) async fn run() -> anyhow::Result<()> {
     let mut collect_rx = tokio_stream::wrappers::UnboundedReceiverStream::new(collect_rx);
     crate::EVENT_LOOP.set(collect_tx).unwrap();
 
-    let mut users: ahash::AHashMap<std::sync::Arc<String>, crate::Sender> = ahash::AHashMap::new();
+    let mut users: ahash::AHashMap<std::sync::Arc<String>, crate::linker::User> =
+        ahash::AHashMap::new();
     let mut chats: ahash::AHashMap<String, std::collections::HashSet<std::sync::Arc<String>>> =
         ahash::AHashMap::new();
 
@@ -44,16 +45,35 @@ pub(super) async fn run() -> anyhow::Result<()> {
 }
 
 async fn _handle(
-    users: &mut ahash::AHashMap<std::sync::Arc<String>, crate::Sender>,
+    users: &mut ahash::AHashMap<std::sync::Arc<String>, crate::linker::User>,
     chats: &mut ahash::AHashMap<String, std::collections::HashSet<std::sync::Arc<String>>>,
     event: Event,
 ) -> anyhow::Result<()> {
     match event {
-        Event::Regist(user, chat_list, sender) => {
+        Event::Regist(user, chat_list, platform) => {
             let user = std::sync::Arc::new(user);
-            if let Some(sender) = users.insert(user.clone(), sender) {
-                let _ = sender.send(crate::linker::Event::Close);
-            }
+            let user_connection = users.entry(user.clone()).or_default();
+
+            match platform {
+                crate::linker::Platform::App(sender) => {
+                    user_connection.app.replace(sender).map(|old| {
+                        tracing::error!("remove old app connection");
+                        let _ = old.send(crate::linker::tcp::Event::Close);
+                    })
+                }
+                crate::linker::Platform::Pc(sender) => {
+                    user_connection.app.replace(sender).map(|old| {
+                        tracing::error!("remove old pc connection");
+                        let _ = old.send(crate::linker::tcp::Event::Close);
+                    })
+                }
+                crate::linker::Platform::Web(sender) => {
+                    user_connection.web.replace(sender).map(|old| {
+                        tracing::error!("remove old web connection");
+                        let _ = old.send(crate::linker::websocket::Event::Close);
+                    })
+                }
+            };
 
             for chat in chat_list {
                 // FIXME: maybe have a better way to do this
@@ -61,25 +81,34 @@ async fn _handle(
                 member.insert(user.clone());
             }
         }
-        Event::Send(recvs, content) => {
+        Event::Send(recv_list, content) => {
+            tracing::error!("send group message: {}", recv_list.len());
             let content = std::sync::Arc::new(content);
-            for recv in recvs {
-                if let Some(sender) = users.get(&recv) {
-                    let _ = sender.send(crate::linker::Event::Write(content.clone()));
+            for recv in recv_list {
+                if let Some(sender) = users.get_mut(&recv) {
+                    tracing::error!("send user: {recv}");
+                    if let Err(_) = sender.send(content.clone()) {
+                        tracing::error!("remove user: {recv}");
+                        users.remove(&recv);
+                    };
                 }
             }
         }
-        Event::SendBatch(chat, exclusions, additional, message) => {
+        Event::SendBatch(chat, exclusions, additional, messages) => {
             if let Some(online) = chats.get_mut(chat.as_str()) {
-                // let message = std::sync::Arc::new(message);
-
                 use tokio_util::codec::Encoder as _;
 
                 let mut codec = crate::linker::MessageCodec {};
                 let mut dst = bytes::BytesMut::new();
-                let _ = codec.encode(message, &mut dst);
+                let _ = codec.encode(&messages, &mut dst);
                 let dst = dst.to_vec();
-                let messages = std::sync::Arc::new(dst);
+                let messages_bytes = std::sync::Arc::new(dst);
+
+                let contents: Vec<String> = messages
+                    .into_iter()
+                    .map(|message| serde_json::to_string(&message.content))
+                    .try_collect()?;
+                let contents = std::sync::Arc::new(contents);
 
                 let mut recv_list: std::collections::HashSet<&str> =
                     online.iter().map(|one| one.as_str()).collect();
@@ -95,8 +124,14 @@ async fn _handle(
                 tracing::error!("send group message: {}", recv_list.len());
 
                 for &&recv in recv_list.iter() {
-                    if let Some(sender) = users.get(&recv.to_string()) {
-                        let _ = sender.send(crate::linker::Event::WriteBatch(messages.clone()));
+                    let recv = recv.to_string();
+                    if let Some(sender) = users.get_mut(&recv) {
+                        tracing::error!("send user: {recv}");
+                        if let Err(_) = sender.send_batch(contents.clone(), messages_bytes.clone())
+                        {
+                            tracing::error!("remove user: {recv}");
+                            users.remove(&recv);
+                        };
                     };
                 }
             }
@@ -130,7 +165,7 @@ async fn _handle(
 }
 
 fn _join(
-    users: &mut ahash::AHashMap<std::sync::Arc<String>, crate::Sender>,
+    users: &mut ahash::AHashMap<std::sync::Arc<String>, crate::linker::User>,
     members: std::collections::HashSet<String>,
 ) -> std::collections::HashSet<std::sync::Arc<String>> {
     let mut users_keys: std::collections::HashSet<std::sync::Arc<String>> =
@@ -152,7 +187,12 @@ mod test {
 
     #[test]
     fn join() {
-        let (tx, _) = tokio::sync::mpsc::unbounded_channel::<crate::linker::Event>();
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel::<crate::linker::tcp::Event>();
+        let tx = crate::linker::User {
+            app: None,
+            web: None,
+            pc: Some(tx),
+        };
         let mut users = ahash::AHashMap::from([
             (Arc::new("uu1".to_string()), tx.clone()),
             (Arc::new("uu2".to_string()), tx.clone()),

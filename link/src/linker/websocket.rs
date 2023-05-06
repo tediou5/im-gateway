@@ -1,4 +1,13 @@
-use super::{Content, Event, Message};
+use super::{Content, Message};
+
+pub(crate) type Sender = tokio::sync::mpsc::UnboundedSender<Event>;
+
+#[derive(Debug)]
+pub(crate) enum Event {
+    Write(std::sync::Arc<Message>),
+    WriteBatch(std::sync::Arc<Vec<String>>),
+    Close,
+}
 
 pub(crate) async fn process(
     ws: axum::extract::ws::WebSocketUpgrade,
@@ -12,27 +21,39 @@ pub(crate) async fn process(
         use futures::StreamExt as _;
 
         while let Some(event) = rx.next().await {
-            // FIXME:
-            // let messages = match event {
-            //     Event::Close => break,
-            //     Event::WriteBatch(messages) => messages,
-            // };
-            // let len = messages.len() as u64;
+            let contents = match event {
+                Event::Close => break,
+                Event::WriteBatch(contents) => {
+                    contents
+                    // FIXME:
+                    // let len = messages.len() as u64;
+                    // write.send(messages).await.map(|_| 1)
+                }
+                Event::Write(message) => {
+                    let content = serde_json::to_string(&message.content).unwrap();
+                    std::sync::Arc::new(vec![content])
+                }
+            };
 
-            // for message in messages.iter() {
-            //     // WebSocket only use Message.Content
-            //     let messages = serde_json::to_string(&message.content).unwrap();
-            //     match write.send(axum::extract::ws::Message::Text(messages)).await {
-            //         Ok(()) => {
-            //             crate::axum_handler::LINK_SEND_COUNT
-            //                 .fetch_add(len, std::sync::atomic::Ordering::Relaxed);
-            //         }
-            //         Err(e) => {
-            //             tracing::error!("websocket send error: {e:?}");
-            //             break;
-            //         }
-            //     };
-            // }
+            for content in contents.iter() {
+                tracing::error!(
+                    "++++++++++++++++++\nwebsocket wait for send: {content:?}\n++++++++++++++++++"
+                );
+                match write
+                    .send(axum::extract::ws::Message::Text(content.to_string()))
+                    .await
+                {
+                    Ok(()) => {
+                        tracing::error!("websocket send ok");
+                        crate::axum_handler::LINK_SEND_COUNT
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    Err(e) => {
+                        tracing::error!("websocket send error: {e:?}");
+                        break;
+                    }
+                };
+            }
         }
 
         // TODO:
@@ -45,7 +66,7 @@ pub(crate) async fn process(
 
 fn handle(
     socket: axum::extract::ws::WebSocket,
-    tx: crate::Sender,
+    tx: Sender,
 ) -> futures::stream::SplitSink<axum::extract::ws::WebSocket, axum::extract::ws::Message> {
     use futures::StreamExt as _;
 
@@ -61,7 +82,15 @@ fn handle(
                     // if let Ok(message) = serde_json::from_str::<Message>(message.as_str()) {
                     if let Ok(content) = serde_json::from_str::<Content>(message.as_str()) {
                         let message: Message = content.into();
-                        let message = message.handle(&tx).await;
+                        let message = message.handle(|platform| {
+                            tracing::error!("platform connection: {platform:?}");
+                            match platform {
+                                "web" => Ok(super::Platform::Web(tx.clone())),
+                                _ => Err(anyhow::anyhow!("unexpected platform")),
+                            }
+                        }).await;
+
+                        tracing::error!("handle message: {message:?}");
 
                         match (crate::KAFKA_CLIENT.get(), message) {
                             (Some(kafka), Ok(Some(message))) => {
