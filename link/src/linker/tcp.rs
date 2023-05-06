@@ -43,7 +43,7 @@ pub(crate) async fn process(stream: tokio::net::TcpStream) {
     use tokio_stream::StreamExt as _;
 
     'tcp: while let Some(event) = rx.next().await {
-        if let Err(_) = match event.to_vec() {
+        if let Err(_e) = match event.to_vec() {
             Some(messages) => write.feed(messages).await,
             None => break 'tcp,
         } {
@@ -56,7 +56,7 @@ pub(crate) async fn process(stream: tokio::net::TcpStream) {
         tokio::pin!(sleep);
 
         loop {
-            if let Err(_) = tokio::select! {
+            if let Err(_e) = tokio::select! {
                 _ = &mut sleep => {
                     crate::axum_handler::LINK_SEND_COUNT
                         .fetch_add(len, std::sync::atomic::Ordering::Relaxed);

@@ -54,7 +54,7 @@ impl User {
         };
 
         if let Some(sender) = self.pc.as_ref() &&
-        let Err(_) = sender.send(tcp::Event::Write(message.clone())) {
+        let Err(_) = sender.send(tcp::Event::Write(message)) {
             self.pc = None;
         };
 

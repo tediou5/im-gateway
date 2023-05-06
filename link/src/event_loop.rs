@@ -87,7 +87,7 @@ fn _handle(
             for recv in recv_list {
                 if let Some(sender) = users.get_mut(&recv) {
                     tracing::debug!("send user: {recv}");
-                    if let Err(_) = sender.send(content.clone()) {
+                    if sender.send(content.clone()).is_err() {
                         tracing::debug!("remove user: {recv}");
                         users.remove(&recv);
                     };
