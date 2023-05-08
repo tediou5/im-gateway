@@ -32,10 +32,12 @@ pub(super) async fn run() -> anyhow::Result<()> {
     // let mut collect_rx = tokio_stream::wrappers::UnboundedReceiverStream::new(collect_rx);
     crate::EVENT_LOOP.set(collect_tx).unwrap();
 
-    let mut users: ahash::AHashMap<std::sync::Arc<String>, crate::linker::User> =
+    let mut users: ahash::AHashMap<std::sync::Arc<String>, std::sync::Arc<crate::linker::User>> =
         ahash::AHashMap::new();
-    let mut chats: ahash::AHashMap<String, std::collections::HashSet<std::sync::Arc<String>>> =
-        ahash::AHashMap::new();
+    let mut chats: ahash::AHashMap<
+        String,
+        std::collections::HashSet<std::sync::Arc<crate::linker::User>>,
+    > = ahash::AHashMap::new();
 
     use tokio_stream::StreamExt as _;
 
@@ -77,15 +79,20 @@ pub(super) async fn run() -> anyhow::Result<()> {
 }
 
 fn _handle(
-    users: &mut ahash::AHashMap<std::sync::Arc<String>, crate::linker::User>,
-    chats: &mut ahash::AHashMap<String, std::collections::HashSet<std::sync::Arc<String>>>,
+    users: &mut ahash::AHashMap<std::sync::Arc<String>, std::sync::Arc<crate::linker::User>>,
+    chats: &mut ahash::AHashMap<
+        String,
+        std::collections::HashSet<std::sync::Arc<crate::linker::User>>,
+    >,
     event: Event,
 ) -> anyhow::Result<()> {
     match event {
         Event::Login(user, chat_list, platform) => {
             tracing::error!("{user} login");
             let user = std::sync::Arc::new(user);
-            let user_connection = users.entry(user.clone()).or_default();
+            let user_connection = users
+                .entry(user.clone())
+                .or_insert_with_key(|pin| crate::linker::User::new_with_pin(pin.clone()).into());
 
             match platform {
                 crate::linker::Platform::App(sender) => {
@@ -111,7 +118,7 @@ fn _handle(
             for chat in chat_list {
                 // FIXME: maybe have a better way to do this
                 let member = chats.entry(chat).or_default();
-                member.insert(user.clone());
+                member.insert(user_connection.clone());
             }
         }
         Event::Send(recv_list, content) => {
@@ -158,14 +165,21 @@ fn _handle(
                 tracing::trace!("send group [{}] message", online.len());
 
                 online.retain(|one| {
-                    if let Some(sender) = users.get_mut(one.as_ref()) &&
-                    let Err(_) = sender.send_batch(contents.clone(), messages_bytes.clone()) {
-                        tracing::debug!("remove user: {one}");
-                        users.remove(one);
-                        false
-                    } else {
-                        true
-                    }
+                    // if let Some(sender) = users.get_mut(one) &&
+                    let pin = one.pin.as_ref();
+                    one.send_batch(contents.clone(), messages_bytes.clone())
+                        .inspect_err(|_e| {
+                            users.remove(pin);
+                        })
+                        .is_ok()
+                    // {
+                    //     tracing::debug!("remove user: {one}");
+                    //     users.remove(one);
+                    //     false
+                    // }
+                    //  else {
+                    //     true
+                    // }
                 });
 
                 // for recv in online.iter() {
@@ -202,7 +216,8 @@ fn _handle(
         Event::Leave(chat, members) => {
             if let Some(online) = chats.get_mut(chat.as_str()) {
                 for member in members {
-                    online.remove(&member);
+                    let user = crate::linker::User::new_with_pin(member.into());
+                    online.remove(&user);
                 }
             }
         }
@@ -211,13 +226,13 @@ fn _handle(
 }
 
 fn _join(
-    users: &mut ahash::AHashMap<std::sync::Arc<String>, crate::linker::User>,
+    users: &mut ahash::AHashMap<std::sync::Arc<String>, std::sync::Arc<crate::linker::User>>,
     members: std::collections::HashSet<String>,
-) -> std::collections::HashSet<std::sync::Arc<String>> {
-    let mut users_keys: std::collections::HashSet<std::sync::Arc<String>> =
+) -> std::collections::HashSet<std::sync::Arc<crate::linker::User>> {
+    let mut users_keys: std::collections::HashSet<std::sync::Arc<crate::linker::User>> =
         std::collections::HashSet::new();
     for member in members {
-        if let Some((user, _)) = users.get_key_value(&member) {
+        if let Some((_, user)) = users.get_key_value(&member) {
             users_keys.insert(user.clone());
         }
     }

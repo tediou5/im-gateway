@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 pub(crate) use message::{Content, Message, MessageCodec};
 
 mod auth;
@@ -36,14 +38,53 @@ impl Platform {
 }
 
 #[allow(dead_code)]
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct User {
-    pub(crate) app: Option<tcp::Sender>,
-    pub(crate) web: Option<websocket::Sender>,
-    pub(crate) pc: Option<tcp::Sender>,
+    pub(crate) pin: Arc<String>,
+    pub(crate) app: std::cell::Cell<Option<tcp::Sender>>,
+    pub(crate) web: std::cell::Cell<Option<websocket::Sender>>,
+    pub(crate) pc: std::cell::Cell<Option<tcp::Sender>>,
+}
+
+impl std::hash::Hash for User {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.pin.hash(state);
+    }
+}
+
+impl Eq for User {}
+
+impl PartialEq for User {
+    fn eq(&self, other: &Self) -> bool {
+        let app_eq = match (self.app, other.app) {
+            (None, None) => true,
+            (Some(s), Some(o)) => s.same_channel(&o),
+            (None, Some(_)) | (Some(_), None) => false,
+        };
+        let web_eq = match (self.web, other.web) {
+            (None, None) => true,
+            (Some(s), Some(o)) => s.same_channel(&o),
+            (None, Some(_)) | (Some(_), None) => false,
+        };
+        let pc_eq = match (self.pc, other.pc) {
+            (None, None) => true,
+            (Some(s), Some(o)) => s.same_channel(&o),
+            (None, Some(_)) | (Some(_), None) => false,
+        };
+        app_eq && web_eq && pc_eq
+    }
 }
 
 impl User {
+    pub(crate) fn new_with_pin(pin: Arc<String>) -> Self {
+        Self {
+            pin,
+            app: None,
+            web: None,
+            pc: None,
+        }
+    }
+
     pub(crate) fn send(&mut self, message: std::sync::Arc<Message>) -> anyhow::Result<()> {
         if let Some(sender) = self.app.as_ref() &&
         let Err(_) = sender.send(tcp::Event::WriteBatch(message.as_ref().into())) {
