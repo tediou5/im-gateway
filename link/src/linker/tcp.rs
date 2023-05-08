@@ -4,7 +4,6 @@ pub(crate) type Sender = tokio::sync::mpsc::UnboundedSender<Event>;
 
 #[derive(Debug, Clone)]
 pub(crate) enum Event {
-    Write(std::sync::Arc<crate::linker::Message>),
     WriteBatch(std::sync::Arc<Vec<u8>>),
     Close,
 }
@@ -13,19 +12,7 @@ impl Event {
     fn to_vec(&self) -> Option<Vec<u8>> {
         match self {
             Event::Close => None,
-            Event::WriteBatch(messages) => {
-                // FIXME:
-                // let len = messages.len() as u64;
-                Some(messages.to_vec())
-            }
-            Event::Write(message) => {
-                use tokio_util::codec::Encoder as _;
-
-                let mut codec = crate::linker::MessageCodec {};
-                let mut dst = bytes::BytesMut::new();
-                let _ = codec.encode(message.as_ref(), &mut dst);
-                Some(dst.to_vec())
-            }
+            Event::WriteBatch(messages) => Some(messages.to_vec()),
         }
     }
 }
@@ -37,49 +24,86 @@ pub(crate) async fn process(stream: tokio::net::TcpStream) {
     // let mut rx = tokio_stream::wrappers::ReceiverStream::new(rx);
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     let mut rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
-    let mut write = handle(stream, tx);
 
-    use futures::SinkExt as _;
+    let mut write = handle(stream, tx);
+    // let mut write = framed_handle(stream, tx);
+
+    // use futures::SinkExt as _;
     use tokio_stream::StreamExt as _;
 
-    'tcp: while let Some(event) = rx.next().await {
-        if let Err(_e) = match event.to_vec() {
-            Some(messages) => write.feed(messages).await,
-            None => break 'tcp,
-        } {
-            // TODO: handle error
-            break 'tcp;
+    while let Some(event) = rx.next().await &&
+    let Some(messages) = event.to_vec() {
+        if (write.writable().await).is_err() {
+            break;
         };
-
-        let mut len = 1;
-        let sleep = tokio::time::sleep(std::time::Duration::from_millis(10));
-        tokio::pin!(sleep);
-
-        loop {
-            if let Err(_e) = tokio::select! {
-                _ = &mut sleep => {
-                    crate::axum_handler::LINK_SEND_COUNT
-                        .fetch_add(len, std::sync::atomic::Ordering::Relaxed);
-                    write.flush().await
-                },
-                Some(event) = rx.next() => match event.to_vec() {
-                    Some(messages) => {
-                        len += 1;
-                        write.feed(messages).await
-                    }
-                    None => break 'tcp,
-                },
-            } {
-                // TODO: handle error
-                break 'tcp;
-            };
+        match write.try_write(messages.as_slice()) {
+            Ok(_) => {
+                crate::axum_handler::LINK_SEND_COUNT
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                continue;
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                continue;
+            }
+            Err(_e) => {
+                break;
+            }
         }
     }
 
-    let _ = write.close().await;
+    use tokio::io::AsyncWriteExt as _;
+    let _ = write.shutdown().await;
+
+    // &&
+    // let Ok(_) = write.feed(messages).await &&
+    // let Ok(_) = write.flush().await {
+    //     tracing::trace!("tcp send ok");
+    //     crate::axum_handler::LINK_SEND_COUNT
+    //         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // }
+
+    // let _ = write.close().await;
 }
 
-fn handle(
+/// handle spawn a new thread, read the request through the tcpStream, then send response to channel tx
+fn handle(stream: tokio::net::TcpStream, tx: Sender) -> tokio::net::tcp::OwnedWriteHalf {
+    let (read, write) = stream.into_split();
+    tokio::task::spawn(async move {
+        let mut is_auth = false;
+        let mut req = [0; 4096];
+        loop {
+            let readable = read.readable().await; // Wait for the socket to be readable
+            if readable.is_ok() {
+                // Try to read data, this may still fail with `WouldBlock`
+                // if the readiness event is a false positive.
+                match read.try_read(&mut req) {
+                    Ok(n) => {
+                        if n == 0 {
+                            let _ = tx.send(Event::Close);
+                            break;
+                        }
+                        // req.truncate(n);
+                        let _ = _handle((req[0..n]).to_vec(), &tx, &mut is_auth).await;
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        // req.clear();
+                        // req.resize(1024, 0);
+                        // req.fill(0);
+                        continue;
+                    }
+                    Err(_e) => {
+                        let _ = tx.send(Event::Close);
+                        break;
+                    }
+                }
+            };
+        }
+    });
+    write
+}
+
+#[allow(dead_code)]
+fn framed_handle(
     stream: tokio::net::TcpStream,
     tx: Sender,
 ) -> futures::stream::SplitSink<
@@ -93,36 +117,39 @@ fn handle(
     let (sink, mut input) = codec.framed(stream).split();
 
     tokio::task::spawn(async move {
+        let mut is_auth = false;
         while let Some(message) = input.next().await {
+            tracing::trace!("received message: {message:?}");
             if let Ok(message) = message {
-                tracing::debug!("received message: {message:?}");
-                let message = message
-                    .handle(|platform| {
-                        tracing::debug!("platform connection: {platform:?}");
-                        match platform {
-                            "app" => Ok(super::Platform::App(tx.clone())),
-                            "pc" => Ok(super::Platform::Pc(tx.clone())),
-                            _ => Err(anyhow::anyhow!("unexpected platform")),
-                        }
-                    })
-                    .await;
-
-                tracing::debug!("handle message: {message:?}");
-
-                match (crate::KAFKA_CLIENT.get(), message) {
-                    (Some(kafka), Ok(Some(message))) => {
-                        let _ = kafka.produce(message).await;
-                    }
-                    (_, Ok(None)) => continue,
-                    _ => {
-                        // TODO: handle error: close connection and send error message to client
-                        tracing::error!("no kafka or redis");
-                        let _ = tx.send(Event::Close);
-                        return;
-                    }
-                }
+                _handle(message, &tx, &mut is_auth).await?;
             }
         }
+        Ok::<(), anyhow::Error>(())
     });
     sink
+}
+
+async fn _handle(message: Vec<u8>, tx: &Sender, is_auth: &mut bool) -> anyhow::Result<()> {
+    if let false = is_auth &&
+    let Ok(super::message::Flow::Next(message)) =
+        TryInto::<crate::linker::Message>::try_into(message.as_slice())?
+            .content
+            .handle(|platform| {
+                tracing::debug!("platform connection: {platform:?}");
+                match platform {
+                    "app" => Ok(super::Platform::App(tx.clone())),
+                    "pc" => Ok(super::Platform::Pc(tx.clone())),
+                    _ => Err(anyhow::anyhow!("unexpected platform")),
+                }
+            })
+            .await
+    {
+        tx.send(Event::WriteBatch((&message).into()))?;
+        *is_auth = true
+    };
+    let kafka = crate::KAFKA_CLIENT
+        .get()
+        .ok_or(anyhow::anyhow!("kafka is not available"))?;
+    kafka.produce(crate::kafka::VecValue(message)).await?;
+    Ok(())
 }

@@ -1,6 +1,9 @@
-use super::auth;
-
 pub(crate) struct MessageCodec;
+
+pub(crate) enum Flow {
+    Continue,
+    Next(Message),
+}
 
 #[derive(Debug, Clone, serde_derive::Serialize, serde_derive::Deserialize)]
 #[serde(tag = "protocol", content = "data")]
@@ -29,7 +32,7 @@ impl Content {
         app_id: &str,
         id: &str,
         timestamp: i64,
-        base_info: &auth::BaseInfo,
+        base_info: &super::auth::BaseInfo,
     ) -> Content {
         let data = std::collections::HashMap::from([
             ("chatId".to_string(), serde_json::json!("")),
@@ -51,6 +54,41 @@ impl Content {
         ]);
         Content::Message { _ext: data }
     }
+
+    pub(super) async fn handle<F>(&self, platform_op: F) -> anyhow::Result<Flow>
+    where
+        F: Fn(&str) -> anyhow::Result<super::Platform>,
+    {
+        match self {
+            Content::Heart { .. } => {
+                // TODO:
+                Ok(Flow::Continue)
+            }
+            Content::Connect {
+                app_id,
+                token,
+                platform,
+            } => {
+                let sender = platform_op(platform.to_lowercase().as_str())?;
+                let message = super::auth::auth(app_id.as_str(), token.as_str(), platform.as_str())
+                    .await?
+                    .check(app_id, sender)
+                    .await?;
+                Ok(Flow::Next(message))
+            }
+            Content::Message { _ext } => Ok(Flow::Continue),
+            Content::Response { _ext } => Ok(Flow::Continue),
+        }
+    }
+}
+
+impl TryFrom<&[u8]> for Content {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        // Convert the data to a string, or fail if it is serde_json error.
+        Ok(serde_json::from_slice(value)?)
+    }
 }
 
 #[derive(Debug, Clone, serde_derive::Serialize, serde_derive::Deserialize)]
@@ -62,33 +100,73 @@ pub(crate) struct Message {
     pub(crate) content: Content,
 }
 
-impl Message {
-    pub(super) async fn handle<F>(self, platform_op: F) -> anyhow::Result<Option<Self>>
-    where
-        F: Fn(&str) -> anyhow::Result<super::Platform>,
-    {
-        let Message { content, .. } = &self;
+impl TryFrom<&[u8]> for Message {
+    type Error = anyhow::Error;
 
-        match content {
-            Content::Heart { .. } => {
-                // TODO:
-                Ok(None)
-            }
-            Content::Connect {
-                app_id,
-                token,
-                platform,
-            } => {
-                let sender = platform_op(platform.to_lowercase().as_str())?;
-                auth::auth(app_id.as_str(), token.as_str(), platform.as_str())
-                    .await?
-                    .check(app_id, sender)
-                    .await?;
-                Ok(None)
-            }
-            Content::Message { _ext } => Ok(Some(self)),
-            Content::Response { _ext } => Ok(Some(self)),
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        if value.len() < 44 {
+            // Not enough data to read length marker.
+            return Err(anyhow::anyhow!(
+                "Invalid Data: length must bigger than 44 bytes"
+            ));
         }
+
+        // Read length marker.
+        let mut length_bytes = [0u8; 4];
+        length_bytes.copy_from_slice(&value[..4]);
+        let length = i32::from_be_bytes(length_bytes);
+        let length_usize = length as usize;
+
+        // Check that the length is not too large to avoid a denial of
+        // service attack where the server runs out of memory.
+        // if length_usize > MAX {
+        //     return Err(std::io::Error::new(
+        //         std::io::ErrorKind::InvalidData,
+        //         format!("Frame of length {} is too large.", length),
+        //     ));
+        // }
+
+        if value.len() < 44 + length_usize {
+            // The full string has not yet arrived.
+            //
+            return Err(anyhow::anyhow!(
+                "Invalid Data: length must bigger than 44 + {length_usize} bytes"
+            ));
+        }
+
+        // Read msg_id marker.
+        let mut msg_id = [0u8; 32];
+        msg_id.copy_from_slice(&value[4..36]);
+
+        let mut timestamp_bytes = [0u8; 8];
+        timestamp_bytes.copy_from_slice(&value[36..44]);
+        let timestamp = i64::from_be_bytes(timestamp_bytes);
+
+        // Use advance to modify src such that it no longer contains
+        // this frame.
+        let content = &value[44..(44 + length_usize)];
+
+        // Convert the data to a string, or fail if it is serde_json error.
+        let content: Content = serde_json::from_slice(content)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        Ok(Message {
+            length,
+            msg_id,
+            timestamp,
+            content,
+        })
+    }
+}
+
+impl From<&Message> for std::sync::Arc<Vec<u8>> {
+    fn from(val: &Message) -> Self {
+        use tokio_util::codec::Encoder as _;
+
+        let mut codec = crate::linker::MessageCodec {};
+        let mut dst = bytes::BytesMut::new();
+        let _ = codec.encode(val, &mut dst);
+        std::sync::Arc::new(dst.to_vec())
     }
 }
 
@@ -242,8 +320,73 @@ impl tokio_util::codec::Encoder<&Message> for MessageCodec {
     }
 }
 
+// impl tokio_util::codec::Decoder for MessageCodec {
+//     type Item = Message;
+//     type Error = std::io::Error;
+
+//     fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+//         if src.len() < 44 {
+//             // Not enough data to read length marker.
+//             return Ok(None);
+//         }
+
+//         // Read length marker.
+//         let mut length_bytes = [0u8; 4];
+//         length_bytes.copy_from_slice(&src[..4]);
+//         let length = i32::from_be_bytes(length_bytes);
+//         let length_usize = length as usize;
+
+//         // Check that the length is not too large to avoid a denial of
+//         // service attack where the server runs out of memory.
+//         // if length_usize > MAX {
+//         //     return Err(std::io::Error::new(
+//         //         std::io::ErrorKind::InvalidData,
+//         //         format!("Frame of length {} is too large.", length),
+//         //     ));
+//         // }
+
+//         if src.len() < 44 + length_usize {
+//             // The full string has not yet arrived.
+//             //
+//             // We reserve more space in the buffer. This is not strictly
+//             // necessary, but is a good idea performance-wise.
+//             src.reserve(44 + length_usize - src.len());
+
+//             // We inform the Framed that we need more bytes to form the next
+//             // frame.
+//             return Ok(None);
+//         }
+
+//         // Read msg_id marker.
+//         let mut msg_id = [0u8; 32];
+//         msg_id.copy_from_slice(&src[4..36]);
+
+//         let mut timestamp_bytes = [0u8; 8];
+//         timestamp_bytes.copy_from_slice(&src[36..44]);
+//         let timestamp = i64::from_be_bytes(timestamp_bytes);
+
+//         // Use advance to modify src such that it no longer contains
+//         // this frame.
+//         let content = &src[44..(44 + length_usize)];
+
+//         // Convert the data to a string, or fail if it is serde_json error.
+//         let content: Content = serde_json::from_slice(content)
+//             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+//         use bytes::Buf as _;
+//         src.advance(44 + length_usize);
+
+//         Ok(Some(Message {
+//             length,
+//             msg_id,
+//             timestamp,
+//             content,
+//         }))
+//     }
+// }
+
 impl tokio_util::codec::Decoder for MessageCodec {
-    type Item = Message;
+    type Item = Vec<u8>;
     type Error = std::io::Error;
 
     fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
@@ -255,54 +398,29 @@ impl tokio_util::codec::Decoder for MessageCodec {
         // Read length marker.
         let mut length_bytes = [0u8; 4];
         length_bytes.copy_from_slice(&src[..4]);
-        let length = i32::from_be_bytes(length_bytes);
-        let length_usize = length as usize;
+        let length = i32::from_be_bytes(length_bytes) as usize;
+        // let length_usize = length as usize;
 
-        // Check that the length is not too large to avoid a denial of
-        // service attack where the server runs out of memory.
-        // if length_usize > MAX {
-        //     return Err(std::io::Error::new(
-        //         std::io::ErrorKind::InvalidData,
-        //         format!("Frame of length {} is too large.", length),
-        //     ));
-        // }
+        let length = length + 44;
 
-        if src.len() < 44 + length_usize {
+        if src.len() < length {
             // The full string has not yet arrived.
             //
             // We reserve more space in the buffer. This is not strictly
             // necessary, but is a good idea performance-wise.
-            src.reserve(44 + length_usize - src.len());
+            src.reserve(length - src.len());
 
             // We inform the Framed that we need more bytes to form the next
             // frame.
             return Ok(None);
         }
 
-        // Read msg_id marker.
-        let mut msg_id = [0u8; 32];
-        msg_id.copy_from_slice(&src[4..36]);
-
-        let mut timestamp_bytes = [0u8; 8];
-        timestamp_bytes.copy_from_slice(&src[36..44]);
-        let timestamp = i64::from_be_bytes(timestamp_bytes);
-
-        // Use advance to modify src such that it no longer contains
-        // this frame.
-        let content = &src[44..(44 + length_usize)];
-
-        // Convert the data to a string, or fail if it is serde_json error.
-        let content: Content = serde_json::from_slice(content)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-
         use bytes::Buf as _;
-        src.advance(44 + length_usize);
 
-        Ok(Some(Message {
-            length,
-            msg_id,
-            timestamp,
-            content,
-        }))
+        let mut dst = vec![0; length];
+        dst.copy_from_slice(&src[0..length]);
+
+        src.advance(length);
+        Ok(Some(dst))
     }
 }

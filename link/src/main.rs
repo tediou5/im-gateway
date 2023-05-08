@@ -22,7 +22,7 @@ use once_cell::sync::OnceCell;
 static AUTH_URL: OnceCell<String> = OnceCell::new();
 static HTTP_CLIENT: OnceCell<reqwest::Client> = OnceCell::new();
 
-static EVENT_LOOP: OnceCell<TokioSender<event_loop::Event>> = OnceCell::new();
+static EVENT_LOOP: OnceCell<tokio::sync::mpsc::Sender<event_loop::Event>> = OnceCell::new();
 static REDIS_CLIENT: OnceCell<redis::Client> = OnceCell::new();
 static KAFKA_CLIENT: OnceCell<kafka::Client> = OnceCell::new();
 type TokioSender<T> = tokio::sync::mpsc::UnboundedSender<T>;
@@ -42,7 +42,7 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    tracing::error!("version: 2023/5/6-17:44");
+    tracing::error!("version: 2023/5/8-15:52");
 
     let local_addr = socket_addr::ipv4::local_addr().await?;
     tracing::error!("local addr: {local_addr:?}");
@@ -67,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::task::spawn(async {
         client
-            .consume(async move |record, tx: TokioSender<event_loop::Event>| {
+            .consume(async move |record, tx: tokio::sync::mpsc::Sender<event_loop::Event>| {
                 axum_handler::KAFKA_CONSUME_COUNT
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let message: anyhow::Result<kafka::Message> = record
@@ -79,29 +79,29 @@ async fn main() -> anyhow::Result<()> {
                     tracing::debug!("consume message: \n{message:?}\n------ end ------");
                     match message {
                         kafka::Message::Private(recv, message) => {
-                            tracing::error!("consumed private message: {recv:?}");
-                            if let Err(_e) = tx.send(event_loop::Event::Send(recv, message)) {
+                            tracing::trace!("consumed private message: {recv:?}");
+                            if let Err(_e) = tx.send(event_loop::Event::Send(recv, message)).await {
                                 // FIXME: handle error
                             };
                         }
                         kafka::Message::Group(chat, exclusions, additional, message) => {
-                            tracing::error!("consumed group message: {chat:?} - {exclusions:?} + {additional:?}");
+                            tracing::trace!("consumed group message: {chat:?} - {exclusions:?} + {additional:?}");
                             if let Err(_e) = tx.send(event_loop::Event::SendBatch(
                                 chat,
                                 exclusions,
                                 additional,
                                 vec![message],
-                            )) {
+                            )).await {
                                 // FIXME: handle error
                             };
                         }
                         kafka::Message::Chat(kafka::Action::Join(chat, users)) => {
-                            if let Err(_e) = tx.send(event_loop::Event::Join(chat, users)) {
+                            if let Err(_e) = tx.send(event_loop::Event::Join(chat, users)).await {
                                 // FIXME: handle error
                             };
                         }
                         kafka::Message::Chat(kafka::Action::Leave(chat, users)) => {
-                            if let Err(_e) = tx.send(event_loop::Event::Leave(chat, users)) {
+                            if let Err(_e) = tx.send(event_loop::Event::Leave(chat, users)).await {
                                 // FIXME: handle error
                             };
                         }
@@ -128,7 +128,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::error!("handle tcp connect");
     while let Ok((stream, _)) = tcp_listener.accept().await {
         // FIXME:
-        stream.set_nodelay(true)?;
+        // stream.set_nodelay(true)?;
         tokio::spawn(async move {
             use std::sync::atomic::Ordering::Relaxed;
 

@@ -1,6 +1,6 @@
 #[derive(Debug)]
 pub(super) enum Event {
-    Regist(
+    Login(
         String,      /* uid */
         Vec<String>, /* chats */
         crate::linker::Platform,
@@ -26,10 +26,10 @@ pub(super) enum Event {
 }
 
 pub(super) async fn run() -> anyhow::Result<()> {
-    // let (collect_tx, collect_rx) = tokio::sync::mpsc::channel::<Event>(10240);
-    // let mut collect_rx = tokio_stream::wrappers::ReceiverStream::new(collect_rx);
-    let (collect_tx, collect_rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    let mut collect_rx = tokio_stream::wrappers::UnboundedReceiverStream::new(collect_rx);
+    let (collect_tx, collect_rx) = tokio::sync::mpsc::channel::<Event>(20480);
+    let mut collect_rx = tokio_stream::wrappers::ReceiverStream::new(collect_rx);
+    // let (collect_tx, collect_rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    // let mut collect_rx = tokio_stream::wrappers::UnboundedReceiverStream::new(collect_rx);
     crate::EVENT_LOOP.set(collect_tx).unwrap();
 
     let mut users: ahash::AHashMap<std::sync::Arc<String>, crate::linker::User> =
@@ -38,9 +38,41 @@ pub(super) async fn run() -> anyhow::Result<()> {
         ahash::AHashMap::new();
 
     use tokio_stream::StreamExt as _;
+
+    // let mut len = 0;
+    // let mut linger = 10;
+
+    // let sleep = tokio::time::sleep(tokio::time::Duration::from_millis(10));
+    // tokio::pin!(sleep);
+
+    // loop {
+    //     tokio::select! {
+    //         _ = &mut sleep => {
+    //             linger = if len > 10 { 20 } else { 10 };
+    //             len = 0;
+
+    //             users.retain(|_, user| {
+    //                 user.flush().is_ok()
+    //             });
+    //         }
+    //         event = collect_rx.next() => {
+    //             match event {
+    //                 Some(event) => {
+    //                     if sleep.is_elapsed() && len == 0 {
+    //                         sleep.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_millis(linger));
+    //                     }
+    //                     _handle(&mut users, &mut chats, event)?;
+    //                 },
+    //                 None => break,
+    //             }
+
+    //         }
+    //     };
+
     while let Some(event) = collect_rx.next().await {
         _handle(&mut users, &mut chats, event)?;
     }
+    // }
     Ok(())
 }
 
@@ -50,7 +82,8 @@ fn _handle(
     event: Event,
 ) -> anyhow::Result<()> {
     match event {
-        Event::Regist(user, chat_list, platform) => {
+        Event::Login(user, chat_list, platform) => {
+            tracing::error!("{user} login");
             let user = std::sync::Arc::new(user);
             let user_connection = users.entry(user.clone()).or_default();
 
@@ -82,11 +115,11 @@ fn _handle(
             }
         }
         Event::Send(recv_list, content) => {
-            tracing::error!("send private message: {}", recv_list.len());
+            tracing::trace!("send private message: {}", recv_list.len());
             let content = std::sync::Arc::new(content);
             for recv in recv_list {
                 if let Some(sender) = users.get_mut(&recv) {
-                    tracing::debug!("send user: {recv}");
+                    tracing::trace!("send user: {recv}");
                     if sender.send(content.clone()).is_err() {
                         tracing::debug!("remove user: {recv}");
                         users.remove(&recv);
@@ -122,7 +155,7 @@ fn _handle(
                 // let recv_list: std::collections::HashSet<&&str> =
                 //     recv_list.difference(exclusions).collect();
 
-                tracing::error!("send group [{}] message", online.len());
+                tracing::trace!("send group [{}] message", online.len());
 
                 online.retain(|one| {
                     if let Some(sender) = users.get_mut(one.as_ref()) &&

@@ -14,14 +14,16 @@ pub(crate) enum Platform {
 }
 
 impl Platform {
-    pub(crate) fn send_one(&self, message: std::sync::Arc<Message>) -> anyhow::Result<()> {
-        match self {
-            Platform::App(sender) => sender.send(tcp::Event::Write(message))?,
-            Platform::Pc(sender) => sender.send(tcp::Event::Write(message))?,
-            Platform::Web(sender) => sender.send(websocket::Event::Write(message))?,
-        };
-        Ok(())
-    }
+    // pub(crate) fn send_one(&self, message: std::sync::Arc<Message>) -> anyhow::Result<()> {
+    //     match self {
+    //         Platform::App(sender) => {
+    //             sender.send(tcp::Event::WriteBatch(message.as_ref().into()))?
+    //         }
+    //         Platform::Pc(sender) => sender.send(tcp::Event::WriteBatch(message.as_ref().into()))?,
+    //         Platform::Web(sender) => sender.send(websocket::Event::Write(message))?,
+    //     };
+    //     Ok(())
+    // }
 
     pub(crate) fn close(&self) -> anyhow::Result<()> {
         match self {
@@ -44,18 +46,18 @@ pub(crate) struct User {
 impl User {
     pub(crate) fn send(&mut self, message: std::sync::Arc<Message>) -> anyhow::Result<()> {
         if let Some(sender) = self.app.as_ref() &&
-        let Err(_) = sender.send(tcp::Event::Write(message.clone())) {
+        let Err(_) = sender.send(tcp::Event::WriteBatch(message.as_ref().into())) {
             self.app = None;
         };
 
-        if let Some(sender) = self.web.as_ref() &&
-        let Err(_) = sender.send(websocket::Event::Write(message.clone())) {
-            self.web = None;
+        if let Some(sender) = self.pc.as_ref() &&
+        let Err(_) = sender.send(tcp::Event::WriteBatch(message.as_ref().into())) {
+            self.pc = None;
         };
 
-        if let Some(sender) = self.pc.as_ref() &&
-        let Err(_) = sender.send(tcp::Event::Write(message)) {
-            self.pc = None;
+        if let Some(sender) = self.web.as_ref() &&
+        let Err(_) = sender.send(websocket::Event::Write(message)) {
+            self.web = None;
         };
 
         if let None = self.app &&
@@ -95,4 +97,24 @@ impl User {
             Ok(())
         }
     }
+
+    // pub(crate) fn flush(&mut self) -> anyhow::Result<()> {
+    //     if let Some(sender) = self.app.as_ref() &&
+    //     let Err(_) = sender.send(tcp::Event::Flush) {
+    //         self.app = None;
+    //     };
+
+    //     if let Some(sender) = self.pc.as_ref() &&
+    //     let Err(_) = sender.send(tcp::Event::Flush) {
+    //         self.pc = None;
+    //     };
+
+    //     if let None = self.app &&
+    //     let None = self.web &&
+    //     let None = self.pc {
+    //         Err(anyhow::anyhow!("user all links has been disconnected"))
+    //     } else {
+    //         Ok(())
+    //     }
+    // }
 }

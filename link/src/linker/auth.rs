@@ -43,17 +43,17 @@ pub(super) struct Response {
 }
 
 impl Response {
-    pub(super) async fn check(self, app_id: &str, platform: super::Platform) -> anyhow::Result<()> {
+    pub(super) async fn check(self, app_id: &str, platform: super::Platform) -> anyhow::Result<super::Message> {
         if let "0" = self.code.as_str() &&
         let Some(Data { base_info, chats }) = self.data &&
         let Some(redis_client) = crate::REDIS_CLIENT.get() &&
         let Some(event_loop) = crate::EVENT_LOOP.get() &&
         let Ok(_) = redis_client.regist(&chats).await &&
-        let Ok(_) = event_loop.send(crate::event_loop::Event::Regist(
+        let Ok(_) = event_loop.send(crate::event_loop::Event::Login(
             base_info.pin.clone(),
             chats,
             platform.clone(),
-        )) {
+        )).await {
             let id = uuid::Uuid::new_v4().to_string();
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::SystemTime::UNIX_EPOCH)
@@ -63,9 +63,10 @@ impl Response {
             let content =
                 Content::new_base_info_content(app_id, id.as_str(), timestamp, &base_info);
 
-            let message: crate::linker::Message = (id, content).into();
-            let _ = platform.send_one(std::sync::Arc::new(message));
-            Ok(())
+            // let message: crate::linker::Message = 
+            Ok((id, content).into())
+            // let _ = platform.send_one(std::sync::Arc::new(message));
+            // Ok(())
         } else {
             // Authorization Error, close connection
                 // FIXME: send error message to client and close connection

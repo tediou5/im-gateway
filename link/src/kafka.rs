@@ -1,4 +1,4 @@
-pub(crate) use message::{chat::Action, Message};
+pub(crate) use message::{chat::Action, Message, VecValue};
 
 mod message;
 #[derive(Debug)]
@@ -110,7 +110,7 @@ impl Client {
 
     pub(crate) async fn consume<F, U>(self, op: F)
     where
-        F: Fn(rskafka::record::RecordAndOffset, crate::TokioSender<crate::event_loop::Event>) -> U,
+        F: Fn(rskafka::record::RecordAndOffset, tokio::sync::mpsc::Sender<crate::event_loop::Event>) -> U,
         U: std::future::Future<Output = ()>,
     {
         use futures::StreamExt;
@@ -127,6 +127,33 @@ impl Client {
             .with_max_batch_size(self.config.consumer.max_batch_size)
             .with_max_wait_ms(self.config.consumer.max_wait_ms)
             .build();
+
+        // let mut len = 0;
+        // let mut linger = 10;
+
+        // let sleep = tokio::time::sleep(tokio::time::Duration::from_millis(10));
+        // tokio::pin!(sleep);
+        // let event_loop = crate::EVENT_LOOP.get().unwrap();
+        // loop {
+        //     tokio::select! {
+        //         _ = &mut sleep =>{
+        //             linger = if len > 10 {
+        //                 20
+        //             } else {
+        //                 10
+        //             };
+
+        //             len = 0;
+        //             event_loop.send(crate::event_loop::Event::Flush).unwrap();
+        //         }
+        //         Some(Ok((record, _high_water_mark))) = stream.next() => {
+        //             if sleep.is_elapsed() && len == 0 {
+        //                 sleep.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_millis(linger));
+        //             }
+        //             op(record, event_loop.clone()).await;
+        //         }
+        //     }
+        // }
 
         // consume data
         while let Some(Ok((record, _high_water_mark))) = stream.next().await {

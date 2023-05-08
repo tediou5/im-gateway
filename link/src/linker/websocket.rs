@@ -71,39 +71,34 @@ fn handle(
     let (sink, mut input) = socket.split();
 
     tokio::task::spawn(async move {
+        let mut is_auth = false;
         while let Some(Ok(message)) = input.next().await {
             match message {
                 axum::extract::ws::Message::Text(message) => {
                     tracing::debug!("received message: {message:?}");
 
-                    // FIXME: is websocket send Message? or Content?:
-                    // if let Ok(message) = serde_json::from_str::<Message>(message.as_str()) {
-                    if let Ok(content) = serde_json::from_str::<Content>(message.as_str()) {
-                        let message: Message = content.into();
-                        let message = message
-                            .handle(|platform| {
-                                tracing::debug!("platform connection: {platform:?}");
-                                match platform {
-                                    "web" => Ok(super::Platform::Web(tx.clone())),
-                                    _ => Err(anyhow::anyhow!("unexpected platform")),
-                                }
-                            })
-                            .await;
+                    let content = serde_json::from_str::<Content>(message.as_str())?;
 
-                        tracing::debug!("handle message: {message:?}");
-
-                        match (crate::KAFKA_CLIENT.get(), message) {
-                            (Some(kafka), Ok(Some(message))) => {
-                                let _ = kafka.produce(message).await;
+                    if let false = is_auth &&
+                    let Ok(super::message::Flow::Next(message)) = content
+                        .handle(|platform| {
+                            tracing::debug!("platform connection: {platform:?}");
+                            match platform {
+                                "web" => Ok(super::Platform::Web(tx.clone())),
+                                _ => Err(anyhow::anyhow!("unexpected platform")),
                             }
-                            (_, Ok(None)) => continue,
-                            _ => {
-                                // TODO: handle error: close connection and send error message to client
-                                let _ = tx.send(Event::Close);
-                                return;
-                            }
-                        }
+                        })
+                        .await
+                    {
+                        tx.send(Event::Write(message.into()))?;
+                        is_auth = true;
                     };
+
+                    let kafka = crate::KAFKA_CLIENT
+                        .get()
+                        .ok_or(anyhow::anyhow!("kafka is not available"))?;
+                    let message: Message = content.into();
+                    kafka.produce(message).await?;
                 }
                 axum::extract::ws::Message::Close(_close) => {
                     let _ = tx.send(Event::Close);
@@ -112,6 +107,7 @@ fn handle(
                 _ => continue,
             }
         }
+        Ok::<(), anyhow::Error>(())
     });
     sink
 }
