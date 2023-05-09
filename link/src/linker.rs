@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 pub(crate) use message::{Content, Message, MessageCodec};
 
 mod auth;
@@ -16,17 +14,6 @@ pub(crate) enum Platform {
 }
 
 impl Platform {
-    // pub(crate) fn send_one(&self, message: std::sync::Arc<Message>) -> anyhow::Result<()> {
-    //     match self {
-    //         Platform::App(sender) => {
-    //             sender.send(tcp::Event::WriteBatch(message.as_ref().into()))?
-    //         }
-    //         Platform::Pc(sender) => sender.send(tcp::Event::WriteBatch(message.as_ref().into()))?,
-    //         Platform::Web(sender) => sender.send(websocket::Event::Write(message))?,
-    //     };
-    //     Ok(())
-    // }
-
     pub(crate) fn close(&self) -> anyhow::Result<()> {
         match self {
             Platform::App(sender) => sender.send(tcp::Event::Close)?,
@@ -40,10 +27,10 @@ impl Platform {
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct User {
-    pub(crate) pin: Arc<String>,
-    pub(crate) app: std::cell::Cell<Option<tcp::Sender>>,
-    pub(crate) web: std::cell::Cell<Option<websocket::Sender>>,
-    pub(crate) pc: std::cell::Cell<Option<tcp::Sender>>,
+    pub(crate) pin: std::rc::Rc<String>,
+    pub(crate) app: std::rc::Rc<std::cell::RefCell<Option<tcp::Sender>>>,
+    pub(crate) web: std::rc::Rc<std::cell::RefCell<Option<websocket::Sender>>>,
+    pub(crate) pc: std::rc::Rc<std::cell::RefCell<Option<tcp::Sender>>>,
 }
 
 impl std::hash::Hash for User {
@@ -56,19 +43,19 @@ impl Eq for User {}
 
 impl PartialEq for User {
     fn eq(&self, other: &Self) -> bool {
-        let app_eq = match (self.app, other.app) {
+        let app_eq = match (self.app.borrow().as_ref(), other.app.borrow().as_ref()) {
             (None, None) => true,
-            (Some(s), Some(o)) => s.same_channel(&o),
+            (Some(s), Some(o)) => s.same_channel(o),
             (None, Some(_)) | (Some(_), None) => false,
         };
-        let web_eq = match (self.web, other.web) {
+        let web_eq = match (self.web.borrow().as_ref(), other.web.borrow().as_ref()) {
             (None, None) => true,
-            (Some(s), Some(o)) => s.same_channel(&o),
+            (Some(s), Some(o)) => s.same_channel(o),
             (None, Some(_)) | (Some(_), None) => false,
         };
-        let pc_eq = match (self.pc, other.pc) {
+        let pc_eq = match (self.pc.borrow().as_ref(), other.pc.borrow().as_ref()) {
             (None, None) => true,
-            (Some(s), Some(o)) => s.same_channel(&o),
+            (Some(s), Some(o)) => s.same_channel(o),
             (None, Some(_)) | (Some(_), None) => false,
         };
         app_eq && web_eq && pc_eq
@@ -76,66 +63,102 @@ impl PartialEq for User {
 }
 
 impl User {
-    pub(crate) fn new_with_pin(pin: Arc<String>) -> Self {
+    pub(crate) fn from_pin(pin: std::rc::Rc<String>) -> Self {
         Self {
             pin,
-            app: None,
-            web: None,
-            pc: None,
+            app: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            web: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            pc: std::rc::Rc::new(std::cell::RefCell::new(None)),
         }
     }
 
-    pub(crate) fn send(&mut self, message: std::sync::Arc<Message>) -> anyhow::Result<()> {
-        if let Some(sender) = self.app.as_ref() &&
+    pub(crate) fn update(&self, platform: Platform) {
+        match platform {
+            Platform::App(sender) => {
+                if let Some(old) = self.app.replace(Some(sender)) {
+                    tracing::error!("remove old app connection");
+                    let _ = old.send(tcp::Event::Close);
+                };
+            }
+            Platform::Pc(sender) => {
+                if let Some(old) = self.pc.replace(Some(sender)) {
+                    tracing::error!("remove old pc connection");
+                    let _ = old.send(tcp::Event::Close);
+                };
+            }
+            Platform::Web(sender) => {
+                if let Some(old) = self.web.replace(Some(sender)) {
+                    tracing::error!("remove old web connection");
+                    let _ = old.send(websocket::Event::Close);
+                };
+            }
+        }
+    }
+    pub(crate) fn send(&self, message: std::sync::Arc<Message>) -> anyhow::Result<()> {
+        let mut flag = 0;
+        if let Some(sender) = self.app.borrow_mut().as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(tcp::Event::WriteBatch(message.as_ref().into())) {
-            self.app = None;
+            self.app.replace(None);
+            flag -= 1
         };
-
-        if let Some(sender) = self.pc.as_ref() &&
+        if let Some(sender) = self.pc.borrow_mut().as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(tcp::Event::WriteBatch(message.as_ref().into())) {
-            self.pc = None;
+            self.pc.replace(None);
+            flag -= 1
         };
-
-        if let Some(sender) = self.web.as_ref() &&
+        if let Some(sender) = self.web.borrow_mut().as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(websocket::Event::Write(message)) {
-            self.web = None;
+            self.web.replace(None);
+            flag -= 1
         };
 
-        if let None = self.app &&
-        let None = self.web &&
-        let None = self.pc {
+        if flag == 0 {
             Err(anyhow::anyhow!("user all links has been disconnected"))
         } else {
             Ok(())
         }
     }
-
     pub(crate) fn send_batch(
-        &mut self,
+        &self,
         messages: std::sync::Arc<Vec<String>>,
         messages_bytes: std::sync::Arc<Vec<u8>>,
     ) -> anyhow::Result<()> {
-        if let Some(sender) = self.app.as_ref() &&
+        let mut flag = 0;
+        if let Some(sender) = self.app.borrow_mut().as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(tcp::Event::WriteBatch(messages_bytes.clone())) {
-            self.app = None;
+            self.app.replace(None);
+            flag -= 1
         };
-
-        if let Some(sender) = self.web.as_ref() &&
-        let Err(_) = sender.send(websocket::Event::WriteBatch(messages)) {
-            self.web = None;
+        if let Some(sender) = self.web.borrow_mut().as_ref().inspect(|_|flag += 1) &&
+        let Err(_) = sender.send(websocket::Event::WriteBatch(messages)).inspect(|_|flag += 1) {
+            self.web.replace(None);
+            flag -= 1
         };
-
-        if let Some(sender) = self.pc.as_ref() &&
+        if let Some(sender) = self.pc.borrow_mut().as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(tcp::Event::WriteBatch(messages_bytes)) {
-            self.pc = None;
+            self.pc.replace(None);
+            flag -= 1
         };
 
-        if let None = self.app &&
-        let None = self.web &&
-        let None = self.pc {
+        if flag == 0 {
             Err(anyhow::anyhow!("user all links has been disconnected"))
         } else {
             Ok(())
+        }
+    }
+
+    pub(crate) fn close(&self) {
+        if let Some(sender) = self.app.borrow().as_ref()  &&
+        let Err(_e) = sender.send(tcp::Event::Close) {
+            // TODO:
+        }
+        if let Some(sender) = self.pc.borrow().as_ref()  &&
+        let Err(_e) = sender.send(tcp::Event::Close) {
+            // TODO:
+        }
+        if let Some(sender) = self.web.borrow().as_ref()  &&
+        let Err(_e) = sender.send(websocket::Event::Close) {
+            // TODO:
         }
     }
 

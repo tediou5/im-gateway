@@ -32,12 +32,10 @@ pub(super) async fn run() -> anyhow::Result<()> {
     // let mut collect_rx = tokio_stream::wrappers::UnboundedReceiverStream::new(collect_rx);
     crate::EVENT_LOOP.set(collect_tx).unwrap();
 
-    let mut users: ahash::AHashMap<std::sync::Arc<String>, std::sync::Arc<crate::linker::User>> =
+    let mut users: ahash::AHashMap<std::rc::Rc<String>, crate::linker::User> =
         ahash::AHashMap::new();
-    let mut chats: ahash::AHashMap<
-        String,
-        std::collections::HashSet<std::sync::Arc<crate::linker::User>>,
-    > = ahash::AHashMap::new();
+    let mut chats: ahash::AHashMap<String, std::collections::HashSet<crate::linker::User>> =
+        ahash::AHashMap::new();
 
     use tokio_stream::StreamExt as _;
 
@@ -79,41 +77,19 @@ pub(super) async fn run() -> anyhow::Result<()> {
 }
 
 fn _handle(
-    users: &mut ahash::AHashMap<std::sync::Arc<String>, std::sync::Arc<crate::linker::User>>,
-    chats: &mut ahash::AHashMap<
-        String,
-        std::collections::HashSet<std::sync::Arc<crate::linker::User>>,
-    >,
+    users: &mut ahash::AHashMap<std::rc::Rc<String>, crate::linker::User>,
+    chats: &mut ahash::AHashMap<String, std::collections::HashSet<crate::linker::User>>,
     event: Event,
 ) -> anyhow::Result<()> {
     match event {
         Event::Login(user, chat_list, platform) => {
             tracing::error!("{user} login");
-            let user = std::sync::Arc::new(user);
+            let user = std::rc::Rc::new(user);
             let user_connection = users
-                .entry(user.clone())
-                .or_insert_with_key(|pin| crate::linker::User::new_with_pin(pin.clone()).into());
+                .entry(user)
+                .or_insert_with_key(|pin| crate::linker::User::from_pin(pin.clone()));
 
-            match platform {
-                crate::linker::Platform::App(sender) => {
-                    user_connection.app.replace(sender).map(|old| {
-                        tracing::error!("remove old app connection");
-                        let _ = old.send(crate::linker::tcp::Event::Close);
-                    })
-                }
-                crate::linker::Platform::Pc(sender) => {
-                    user_connection.app.replace(sender).map(|old| {
-                        tracing::error!("remove old pc connection");
-                        let _ = old.send(crate::linker::tcp::Event::Close);
-                    })
-                }
-                crate::linker::Platform::Web(sender) => {
-                    user_connection.web.replace(sender).map(|old| {
-                        tracing::error!("remove old web connection");
-                        let _ = old.send(crate::linker::websocket::Event::Close);
-                    })
-                }
-            };
+            user_connection.update(platform);
 
             for chat in chat_list {
                 // FIXME: maybe have a better way to do this
@@ -165,30 +141,13 @@ fn _handle(
                 tracing::trace!("send group [{}] message", online.len());
 
                 online.retain(|one| {
-                    // if let Some(sender) = users.get_mut(one) &&
-                    let pin = one.pin.as_ref();
                     one.send_batch(contents.clone(), messages_bytes.clone())
                         .inspect_err(|_e| {
-                            users.remove(pin);
+                            users.remove(one.pin.as_ref());
+                            one.close()
                         })
                         .is_ok()
-                    // {
-                    //     tracing::debug!("remove user: {one}");
-                    //     users.remove(one);
-                    //     false
-                    // }
-                    //  else {
-                    //     true
-                    // }
                 });
-
-                // for recv in online.iter() {
-                //     if let Some(sender) = users.get_mut(recv.as_ref()) &&
-                //     let Err(_) = sender.send_batch(contents.clone(), messages_bytes.clone()) {
-                //         tracing::debug!("remove user: {recv}");
-                //         users.remove(recv);
-                //     };
-                // }
             } else {
                 tracing::error!("no such chat: {chat}");
             }
@@ -216,7 +175,7 @@ fn _handle(
         Event::Leave(chat, members) => {
             if let Some(online) = chats.get_mut(chat.as_str()) {
                 for member in members {
-                    let user = crate::linker::User::new_with_pin(member.into());
+                    let user = crate::linker::User::from_pin(member.into());
                     online.remove(&user);
                 }
             }
@@ -226,10 +185,10 @@ fn _handle(
 }
 
 fn _join(
-    users: &mut ahash::AHashMap<std::sync::Arc<String>, std::sync::Arc<crate::linker::User>>,
+    users: &mut ahash::AHashMap<std::rc::Rc<String>, crate::linker::User>,
     members: std::collections::HashSet<String>,
-) -> std::collections::HashSet<std::sync::Arc<crate::linker::User>> {
-    let mut users_keys: std::collections::HashSet<std::sync::Arc<crate::linker::User>> =
+) -> std::collections::HashSet<crate::linker::User> {
+    let mut users_keys: std::collections::HashSet<crate::linker::User> =
         std::collections::HashSet::new();
     for member in members {
         if let Some((_, user)) = users.get_key_value(&member) {
@@ -242,28 +201,29 @@ fn _join(
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashSet, sync::Arc};
-
     use super::_join;
+    use crate::linker::User;
+    use std::{collections::HashSet, rc::Rc};
 
     #[test]
     fn join() {
-        let (tx, _) = tokio::sync::mpsc::unbounded_channel::<crate::linker::tcp::Event>();
-        let tx = crate::linker::User {
-            app: None,
-            web: None,
-            pc: Some(tx),
-        };
+        let uu1 = Rc::new("uu1".to_string());
+        let uu2 = Rc::new("uu2".to_string());
+        let uu3 = Rc::new("uu3".to_string());
+        let uu4 = Rc::new("uu4".to_string());
+        let uu5 = Rc::new("uu5".to_string());
+        let uu6 = Rc::new("uu6".to_string());
+
         let mut users = ahash::AHashMap::from([
-            (Arc::new("uu1".to_string()), tx.clone()),
-            (Arc::new("uu2".to_string()), tx.clone()),
-            (Arc::new("uu3".to_string()), tx.clone()),
-            (Arc::new("uu4".to_string()), tx.clone()),
-            (Arc::new("uu5".to_string()), tx.clone()),
+            (uu1.clone(), User::from_pin(uu1.clone())),
+            (uu2.clone(), User::from_pin(uu2.clone())),
+            (uu3.clone(), User::from_pin(uu3.clone())),
+            (uu4.clone(), User::from_pin(uu4.clone())),
+            (uu5.clone(), User::from_pin(uu5.clone())),
         ]);
 
         let mut chat = std::collections::HashSet::new();
-        chat.insert(Arc::new("uu6".to_string()));
+        chat.insert(User::from_pin(uu6.clone()));
 
         let member = _join(
             &mut users,
@@ -274,9 +234,9 @@ mod test {
         member.into_iter().collect_into(&mut chat);
 
         let new_chat = std::collections::HashSet::from_iter([
-            Arc::new("uu6".to_string()),
-            Arc::new("uu2".to_string()),
-            Arc::new("uu3".to_string()),
+            User::from_pin(uu6),
+            User::from_pin(uu2),
+            User::from_pin(uu3),
         ]);
 
         assert_eq!(chat, new_chat);

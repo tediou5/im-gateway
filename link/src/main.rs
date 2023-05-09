@@ -116,13 +116,23 @@ async fn main() -> anyhow::Result<()> {
     // TODO: init & run raft
 
     tokio::task::spawn(async {
-        tracing::error!("running event loop");
-        event_loop::run().await.unwrap();
-    });
-
-    tokio::task::spawn(async {
         tracing::error!("running http server");
         axum_handler::run(config.http).await;
+    });
+
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let local = tokio::task::LocalSet::new();
+        local.spawn_local(async move {
+            tracing::error!("running event loop");
+            event_loop::run().await.unwrap();
+        });
+        // This will return once all senders are dropped and all
+        // spawned tasks have returned.
+        rt.block_on(local);
     });
 
     tracing::error!("handle tcp connect");

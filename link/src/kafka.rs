@@ -110,7 +110,10 @@ impl Client {
 
     pub(crate) async fn consume<F, U>(self, op: F)
     where
-        F: Fn(rskafka::record::RecordAndOffset, tokio::sync::mpsc::Sender<crate::event_loop::Event>) -> U,
+        F: Fn(
+            rskafka::record::RecordAndOffset,
+            tokio::sync::mpsc::Sender<crate::event_loop::Event>,
+        ) -> U,
         U: std::future::Future<Output = ()>,
     {
         use futures::StreamExt;

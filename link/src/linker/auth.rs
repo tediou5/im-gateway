@@ -43,7 +43,11 @@ pub(super) struct Response {
 }
 
 impl Response {
-    pub(super) async fn check(self, app_id: &str, platform: super::Platform) -> anyhow::Result<super::Message> {
+    pub(super) async fn check(
+        self,
+        app_id: &str,
+        platform: super::Platform,
+    ) -> anyhow::Result<super::Message> {
         if let "0" = self.code.as_str() &&
         let Some(Data { base_info, chats }) = self.data &&
         let Some(redis_client) = crate::REDIS_CLIENT.get() &&
@@ -63,10 +67,7 @@ impl Response {
             let content =
                 Content::new_base_info_content(app_id, id.as_str(), timestamp, &base_info);
 
-            // let message: crate::linker::Message = 
             Ok((id, content).into())
-            // let _ = platform.send_one(std::sync::Arc::new(message));
-            // Ok(())
         } else {
             // Authorization Error, close connection
                 // FIXME: send error message to client and close connection
