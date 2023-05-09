@@ -48,9 +48,7 @@ impl Response {
         app_id: &str,
         platform: super::Platform,
     ) -> anyhow::Result<super::Message> {
-        tracing::error!("----------------------------");
-        tracing::error!("auth body: {:#?}", self);
-        tracing::error!("----------------------------");
+        tracing::trace!("auth body: {:#?}", self);
 
         if let "0" = self.code.as_str() &&
         let Some(Data { base_info, chats }) = self.data &&

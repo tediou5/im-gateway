@@ -36,7 +36,6 @@ pub(crate) async fn process(
             };
 
             for content in contents.iter() {
-                tracing::debug!("\nwebsocket wait for send: {content:?}\n++++++++++++++++++");
                 match write
                     .send(axum::extract::ws::Message::Text(content.to_string()))
                     .await
@@ -80,27 +79,34 @@ fn handle(
 
                     let content = serde_json::from_str::<Content>(message.as_str())?;
 
-                    if let false = is_auth &&
-                    let Ok(super::message::Flow::Next(message)) = content
-                        .handle(|platform| {
-                            tracing::debug!("platform connection: {platform:?}");
-                            match platform {
-                                "web" => Ok(super::Platform::Web(tx.clone())),
-                                _ => Err(anyhow::anyhow!("unexpected platform")),
-                            }
-                        })
-                        .await
-                    {
-                        tx.send(Event::Write(message.into()))?;
-                        is_auth = true;
-                    } else {
-                        let kafka = crate::KAFKA_CLIENT
-                            .get()
-                            .ok_or(anyhow::anyhow!("kafka is not available"))?;
-                        let message: Message = content.into();
-                        kafka.produce(message).await?;
+                    if let false = is_auth {
+                        if let Ok(super::message::Flow::Next(message)) = content
+                            .handle(|platform| {
+                                tracing::debug!("platform connection: {platform:?}");
+                                match platform {
+                                    "web" => Ok(super::Platform::Web(tx.clone())),
+                                    _ => Err(anyhow::anyhow!("unexpected platform")),
+                                }
+                            })
+                            .await
+                        {
+                            tx.send(Event::Write(message.into()))?;
+                            is_auth = true;
+                        } else {
+                            // close the connection when the first message is not auth message.
+                            tracing::error!(
+                                "close the connection when the first message is not auth message."
+                            );
+                            let _ = tx.send(Event::Close);
+                            return Err(anyhow::anyhow!("Auth Error: must authenticate first"));
+                        };
                     }
 
+                    let kafka = crate::KAFKA_CLIENT
+                        .get()
+                        .ok_or(anyhow::anyhow!("kafka is not available"))?;
+                    let message: Message = content.into();
+                    kafka.produce(message).await?;
                 }
                 axum::extract::ws::Message::Close(_close) => {
                     let _ = tx.send(Event::Close);

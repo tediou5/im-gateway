@@ -108,10 +108,6 @@ async fn _handle(
             });
         }
         Event::Send(recv_list, content) => {
-            tracing::trace!("send private message: {}", recv_list.len());
-            tracing::trace!("---------------------------------------------------");
-            tracing::trace!("users: {users:?}");
-            tracing::trace!("---------------------------------------------------");
             let content = std::sync::Arc::new(content);
             for recv in recv_list {
                 if let Some(sender) = users.get_mut(&recv) {

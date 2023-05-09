@@ -102,7 +102,7 @@ pub(crate) struct Message {
 
 impl TryFrom<&[u8]> for Message {
     type Error = anyhow::Error;
-    
+
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
         if value.len() < 44 {
             // Not enough data to read length marker.
