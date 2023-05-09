@@ -76,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
                     .inspect_err(|e| tracing::error!("consumed record error: {e}"));
 
                 if let Ok(message) = message {
-                    tracing::debug!("consume message: \n{message:?}\n------ end ------");
+                    tracing::trace!("consume message: \n{message:?}\n------ end ------");
                     match message {
                         kafka::Message::Private(recv, message) => {
                             tracing::trace!("consumed private message: {recv:?}");

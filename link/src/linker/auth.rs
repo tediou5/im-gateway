@@ -48,20 +48,24 @@ impl Response {
         app_id: &str,
         platform: super::Platform,
     ) -> anyhow::Result<super::Message> {
+        tracing::error!("----------------------------");
+        tracing::error!("auth body: {:#?}", self);
+        tracing::error!("----------------------------");
+
         if let "0" = self.code.as_str() &&
         let Some(Data { base_info, chats }) = self.data &&
-        let Some(redis_client) = crate::REDIS_CLIENT.get() &&
-        let Some(event_loop) = crate::EVENT_LOOP.get() &&
-        let Ok(_) = redis_client.regist(&chats).await &&
-        let Ok(_) = event_loop.send(crate::event_loop::Event::Login(
-            base_info.pin.clone(),
-            chats,
-            platform.clone(),
-        )).await {
+        // let Some(redis_client) = crate::REDIS_CLIENT.get() &&
+        let Some(event_loop) = crate::EVENT_LOOP.get() {
+            // redis_client.regist(&chats).await?;
+            event_loop.send(crate::event_loop::Event::Login(
+                base_info.pin.clone(),
+                chats,
+                platform.clone(),
+            )).await?;
+
             let id = uuid::Uuid::new_v4().to_string();
             let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .unwrap()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)?
                 .as_secs() as i64;
 
             let content =

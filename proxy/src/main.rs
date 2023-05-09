@@ -41,12 +41,14 @@ async fn main() -> anyhow::Result<()> {
                 let linkers = match &proto {
                     protocol::LinkProtocol::Private(recvs, ..)
                     | protocol::LinkProtocol::Chat(protocol::chat::Action::Join(.., recvs)) => {
-                        // FIXME: select the linker service by hashring.
-                        if recvs.is_empty() {
-                            None
-                        } else {
-                            redis.get_linkers().await.ok()
-                        }
+                        // // FIXME: select the linker service by hashring.
+                        // if recvs.is_empty() {
+                        //     None
+                        // } else {
+                        //     redis.get_linkers().await.ok()
+                        // }
+                        // FIXME: pass private for test
+                        None
                     }
                     protocol::LinkProtocol::Group(chat, ..) /* FIXME: additional should send like Private Message */
                     | protocol::LinkProtocol::Chat(protocol::chat::Action::Leave(chat, ..)) => {

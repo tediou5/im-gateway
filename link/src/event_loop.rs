@@ -70,13 +70,13 @@ pub(super) async fn run() -> anyhow::Result<()> {
     //     };
 
     while let Some(event) = collect_rx.next().await {
-        _handle(&mut users, &mut chats, event)?;
+        _handle(&mut users, &mut chats, event).await?;
     }
     // }
     Ok(())
 }
 
-fn _handle(
+async fn _handle(
     users: &mut ahash::AHashMap<std::rc::Rc<String>, crate::linker::User>,
     chats: &mut ahash::AHashMap<String, std::collections::HashSet<crate::linker::User>>,
     event: Event,
@@ -91,14 +91,27 @@ fn _handle(
 
             user_connection.update(platform);
 
+            let mut regiest_chats = Vec::new();
+
             for chat in chat_list {
                 // FIXME: maybe have a better way to do this
-                let member = chats.entry(chat).or_default();
+                let member = chats.entry(chat).or_insert_with_key(|chat| {
+                    regiest_chats.push(chat.to_string());
+                    Default::default()
+                });
                 member.insert(user_connection.clone());
             }
+            tokio::task::spawn(async move {
+                let redis_client = crate::REDIS_CLIENT.get().unwrap();
+                redis_client.regist(regiest_chats).await?;
+                Ok::<(), anyhow::Error>(())
+            });
         }
         Event::Send(recv_list, content) => {
             tracing::trace!("send private message: {}", recv_list.len());
+            tracing::trace!("---------------------------------------------------");
+            tracing::trace!("users: {users:?}");
+            tracing::trace!("---------------------------------------------------");
             let content = std::sync::Arc::new(content);
             for recv in recv_list {
                 if let Some(sender) = users.get_mut(&recv) {
@@ -159,14 +172,14 @@ fn _handle(
                 let online = chats.entry(chat.clone()).or_default();
                 if online.is_empty() {
                     if let Some(redis_client) = crate::REDIS_CLIENT.get() {
-                        tokio::task::spawn(async move {
-                            tracing::debug!("add [{chat}] into router");
-                            redis_client
-                                .regist(&vec![chat])
-                                .await
-                                .inspect_err(|e| tracing::error!("regist error: {e}"))?;
-                            Ok::<(), anyhow::Error>(())
-                        });
+                        // tokio::task::spawn(async move {
+                        tracing::debug!("add [{chat}] into router");
+                        redis_client
+                            .regist(vec![chat])
+                            .await
+                            .inspect_err(|e| tracing::error!("regist error: {e}"))?;
+                        //     Ok::<(), anyhow::Error>(())
+                        // });
                     }
                 }
                 members.into_iter().collect_into(online);

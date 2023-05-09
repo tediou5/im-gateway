@@ -130,29 +130,35 @@ fn framed_handle(
 }
 
 async fn _handle(message_bytes: Vec<u8>, tx: &Sender, is_auth: &mut bool) -> anyhow::Result<()> {
-    tracing::trace!("received message: {message_bytes:?}, is auth: {is_auth}");
-    if let false = is_auth &&
-    let Ok(super::message::Flow::Next(message)) =
-        TryInto::<crate::linker::Message>::try_into(message_bytes.as_slice())?
+    tracing::trace!("is auth: {is_auth}");
+    if *is_auth == false {
+        let flow = TryInto::<crate::linker::Message>::try_into(message_bytes.as_slice())?
             .content
             .handle(|platform| {
-                tracing::debug!("platform connection: {platform:?}");
+                tracing::trace!("platform connection: {platform:?}");
                 match platform {
                     "app" => Ok(super::Platform::App(tx.clone())),
                     "pc" => Ok(super::Platform::Pc(tx.clone())),
                     _ => Err(anyhow::anyhow!("unexpected platform")),
                 }
             })
-            .await
-    {
-        tx.send(Event::WriteBatch((&message).into()))?;
-        *is_auth = true
-    } else {
-        let kafka = crate::KAFKA_CLIENT
-            .get()
-            .ok_or(anyhow::anyhow!("kafka is not available"))?;
-        kafka.produce(crate::kafka::VecValue(message_bytes)).await?;
+            .await?;
+        if let super::message::Flow::Next(message) = flow {
+            tx.send(Event::WriteBatch((&message).into()))?;
+            *is_auth = true;
+            return Ok(());
+        } else {
+            // close the connection when the first message is not auth message.
+            tracing::error!("close the connection when the first message is not auth message.");
+            let _ = tx.send(Event::Close);
+            return Err(anyhow::anyhow!("Auth Error: must authenticate first"));
+        };
     }
+
+    let kafka = crate::KAFKA_CLIENT
+        .get()
+        .ok_or(anyhow::anyhow!("kafka is not available"))?;
+    kafka.produce(crate::kafka::VecValue(message_bytes)).await?;
 
     Ok(())
 }

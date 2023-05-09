@@ -5,7 +5,6 @@ mod message;
 pub(crate) mod tcp;
 pub(crate) mod websocket;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) enum Platform {
     App(tcp::Sender),
@@ -76,40 +75,47 @@ impl User {
         match platform {
             Platform::App(sender) => {
                 if let Some(old) = self.app.replace(Some(sender)) {
-                    tracing::error!("remove old app connection");
+                    tracing::error!("{}: remove old > app < connection", self.pin.as_str());
                     let _ = old.send(tcp::Event::Close);
                 };
             }
             Platform::Pc(sender) => {
                 if let Some(old) = self.pc.replace(Some(sender)) {
-                    tracing::error!("remove old pc connection");
+                    tracing::error!("{}: remove old > pc < connection", self.pin.as_str());
                     let _ = old.send(tcp::Event::Close);
                 };
             }
             Platform::Web(sender) => {
                 if let Some(old) = self.web.replace(Some(sender)) {
-                    tracing::error!("remove old web connection");
+                    tracing::error!("{}: remove old > web < connection", self.pin.as_str());
                     let _ = old.send(websocket::Event::Close);
                 };
             }
         }
     }
+
     pub(crate) fn send(&self, message: std::sync::Arc<Message>) -> anyhow::Result<()> {
         let mut flag = 0;
-        if let Some(sender) = self.app.borrow_mut().as_ref().inspect(|_|flag += 1) &&
+
+        let mut app = self.app.borrow_mut();
+        if let Some(sender) = app.as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(tcp::Event::WriteBatch(message.as_ref().into())) {
-            self.app.replace(None);
-            flag -= 1
+            app.take();
+            flag -= 1;
         };
-        if let Some(sender) = self.pc.borrow_mut().as_ref().inspect(|_|flag += 1) &&
+
+        let mut pc = self.pc.borrow_mut();
+        if let Some(sender) = pc.as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(tcp::Event::WriteBatch(message.as_ref().into())) {
-            self.pc.replace(None);
-            flag -= 1
+            pc.take();
+            flag -= 1;
         };
-        if let Some(sender) = self.web.borrow_mut().as_ref().inspect(|_|flag += 1) &&
+
+        let mut web = self.web.borrow_mut();
+        if let Some(sender) = web.as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(websocket::Event::Write(message)) {
-            self.web.replace(None);
-            flag -= 1
+            web.take();
+            flag -= 1;
         };
 
         if flag == 0 {
@@ -118,26 +124,33 @@ impl User {
             Ok(())
         }
     }
+
     pub(crate) fn send_batch(
         &self,
         messages: std::sync::Arc<Vec<String>>,
         messages_bytes: std::sync::Arc<Vec<u8>>,
     ) -> anyhow::Result<()> {
         let mut flag = 0;
-        if let Some(sender) = self.app.borrow_mut().as_ref().inspect(|_|flag += 1) &&
+
+        let mut app = self.app.borrow_mut();
+        if let Some(sender) = app.as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(tcp::Event::WriteBatch(messages_bytes.clone())) {
-            self.app.replace(None);
-            flag -= 1
+            app.take();
+            flag -= 1;
         };
-        if let Some(sender) = self.web.borrow_mut().as_ref().inspect(|_|flag += 1) &&
-        let Err(_) = sender.send(websocket::Event::WriteBatch(messages)).inspect(|_|flag += 1) {
-            self.web.replace(None);
-            flag -= 1
-        };
-        if let Some(sender) = self.pc.borrow_mut().as_ref().inspect(|_|flag += 1) &&
+
+        let mut pc = self.pc.borrow_mut();
+        if let Some(sender) = pc.as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(tcp::Event::WriteBatch(messages_bytes)) {
-            self.pc.replace(None);
-            flag -= 1
+            pc.take();
+            flag -= 1;
+        };
+
+        let mut web = self.web.borrow_mut();
+        if let Some(sender) = web.as_ref().inspect(|_|flag += 1) &&
+        let Err(_) = sender.send(websocket::Event::WriteBatch(messages)) {
+            web.take();
+            flag -= 1;
         };
 
         if flag == 0 {

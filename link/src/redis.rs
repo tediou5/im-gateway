@@ -39,7 +39,7 @@ impl Client {
         format!("router:{chat}")
     }
 
-    pub(crate) async fn regist(&self, chats: &Vec<String>) -> anyhow::Result<()> {
+    pub(crate) async fn regist(&self, chats: Vec<String>) -> anyhow::Result<()> {
         let pipe = self.inner.pipeline();
         for chat in chats {
             pipe.sadd(
