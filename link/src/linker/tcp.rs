@@ -129,10 +129,11 @@ fn framed_handle(
     sink
 }
 
-async fn _handle(message: Vec<u8>, tx: &Sender, is_auth: &mut bool) -> anyhow::Result<()> {
+async fn _handle(message_bytes: Vec<u8>, tx: &Sender, is_auth: &mut bool) -> anyhow::Result<()> {
+    tracing::trace!("received message: {message_bytes:?}, is auth: {is_auth}");
     if let false = is_auth &&
     let Ok(super::message::Flow::Next(message)) =
-        TryInto::<crate::linker::Message>::try_into(message.as_slice())?
+        TryInto::<crate::linker::Message>::try_into(message_bytes.as_slice())?
             .content
             .handle(|platform| {
                 tracing::debug!("platform connection: {platform:?}");
@@ -146,10 +147,12 @@ async fn _handle(message: Vec<u8>, tx: &Sender, is_auth: &mut bool) -> anyhow::R
     {
         tx.send(Event::WriteBatch((&message).into()))?;
         *is_auth = true
-    };
-    let kafka = crate::KAFKA_CLIENT
-        .get()
-        .ok_or(anyhow::anyhow!("kafka is not available"))?;
-    kafka.produce(crate::kafka::VecValue(message)).await?;
+    } else {
+        let kafka = crate::KAFKA_CLIENT
+            .get()
+            .ok_or(anyhow::anyhow!("kafka is not available"))?;
+        kafka.produce(crate::kafka::VecValue(message_bytes)).await?;
+    }
+
     Ok(())
 }

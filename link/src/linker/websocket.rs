@@ -59,6 +59,7 @@ pub(crate) async fn process(
         // connected. Once they disconnect, then...
         // user_disconnected(&username, &uuid).await;
         tracing::info!("disconnecting");
+        let _ = write.close();
     })
 }
 
@@ -92,13 +93,14 @@ fn handle(
                     {
                         tx.send(Event::Write(message.into()))?;
                         is_auth = true;
-                    };
+                    } else {
+                        let kafka = crate::KAFKA_CLIENT
+                            .get()
+                            .ok_or(anyhow::anyhow!("kafka is not available"))?;
+                        let message: Message = content.into();
+                        kafka.produce(message).await?;
+                    }
 
-                    let kafka = crate::KAFKA_CLIENT
-                        .get()
-                        .ok_or(anyhow::anyhow!("kafka is not available"))?;
-                    let message: Message = content.into();
-                    kafka.produce(message).await?;
                 }
                 axum::extract::ws::Message::Close(_close) => {
                     let _ = tx.send(Event::Close);

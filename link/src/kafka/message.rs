@@ -32,18 +32,18 @@ impl From<VecValue> for rskafka::record::Record {
     }
 }
 
-impl From<Message> for rskafka::record::Record {
-    fn from(value: Message) -> Self {
-        use time::OffsetDateTime;
+// impl From<Message> for rskafka::record::Record {
+//     fn from(value: Message) -> Self {
+//         use time::OffsetDateTime;
 
-        Self {
-            key: None,
-            value: serde_json::to_vec(&value).ok(),
-            headers: std::collections::BTreeMap::new(),
-            timestamp: OffsetDateTime::now_utc(),
-        }
-    }
-}
+//         Self {
+//             key: None,
+//             value: serde_json::to_vec(&value).ok(),
+//             headers: std::collections::BTreeMap::new(),
+//             timestamp: OffsetDateTime::now_utc(),
+//         }
+//     }
+// }
 
 impl TryFrom<rskafka::record::Record> for Message {
     type Error = anyhow::Error;
