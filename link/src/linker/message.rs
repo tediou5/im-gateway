@@ -236,7 +236,6 @@ impl TryFrom<serde_json::Value> for Message {
     }
 }
 
-// FIXME: if message is too large, the value is empty: Some([])
 impl From<Message> for rskafka::record::Record {
     fn from(value: Message) -> Self {
         use time::OffsetDateTime;
@@ -319,71 +318,6 @@ impl tokio_util::codec::Encoder<&Message> for MessageCodec {
         Ok(())
     }
 }
-
-// impl tokio_util::codec::Decoder for MessageCodec {
-//     type Item = Message;
-//     type Error = std::io::Error;
-
-//     fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-//         if src.len() < 44 {
-//             // Not enough data to read length marker.
-//             return Ok(None);
-//         }
-
-//         // Read length marker.
-//         let mut length_bytes = [0u8; 4];
-//         length_bytes.copy_from_slice(&src[..4]);
-//         let length = i32::from_be_bytes(length_bytes);
-//         let length_usize = length as usize;
-
-//         // Check that the length is not too large to avoid a denial of
-//         // service attack where the server runs out of memory.
-//         // if length_usize > MAX {
-//         //     return Err(std::io::Error::new(
-//         //         std::io::ErrorKind::InvalidData,
-//         //         format!("Frame of length {} is too large.", length),
-//         //     ));
-//         // }
-
-//         if src.len() < 44 + length_usize {
-//             // The full string has not yet arrived.
-//             //
-//             // We reserve more space in the buffer. This is not strictly
-//             // necessary, but is a good idea performance-wise.
-//             src.reserve(44 + length_usize - src.len());
-
-//             // We inform the Framed that we need more bytes to form the next
-//             // frame.
-//             return Ok(None);
-//         }
-
-//         // Read msg_id marker.
-//         let mut msg_id = [0u8; 32];
-//         msg_id.copy_from_slice(&src[4..36]);
-
-//         let mut timestamp_bytes = [0u8; 8];
-//         timestamp_bytes.copy_from_slice(&src[36..44]);
-//         let timestamp = i64::from_be_bytes(timestamp_bytes);
-
-//         // Use advance to modify src such that it no longer contains
-//         // this frame.
-//         let content = &src[44..(44 + length_usize)];
-
-//         // Convert the data to a string, or fail if it is serde_json error.
-//         let content: Content = serde_json::from_slice(content)
-//             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-
-//         use bytes::Buf as _;
-//         src.advance(44 + length_usize);
-
-//         Ok(Some(Message {
-//             length,
-//             msg_id,
-//             timestamp,
-//             content,
-//         }))
-//     }
-// }
 
 impl tokio_util::codec::Decoder for MessageCodec {
     type Item = Vec<u8>;

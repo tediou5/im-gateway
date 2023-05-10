@@ -8,15 +8,6 @@ pub(crate) enum Event {
     Close,
 }
 
-impl Event {
-    fn to_vec(&self) -> Option<Vec<u8>> {
-        match self {
-            Event::Close => None,
-            Event::WriteBatch(messages) => Some(messages.to_vec()),
-        }
-    }
-}
-
 pub(crate) async fn process(stream: tokio::net::TcpStream) {
     // Use an unbounded channel to handle buffering and flushing of messages
     // to the event source...
@@ -32,11 +23,11 @@ pub(crate) async fn process(stream: tokio::net::TcpStream) {
     use tokio_stream::StreamExt as _;
 
     while let Some(event) = rx.next().await &&
-    let Some(messages) = event.to_vec() {
+    let Event::WriteBatch(message) = event {
         if (write.writable().await).is_err() {
             break;
         };
-        match write.try_write(messages.as_slice()) {
+        match write.try_write(message.as_slice()) {
             Ok(_) => {
                 crate::axum_handler::LINK_SEND_COUNT
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -72,31 +63,30 @@ fn handle(stream: tokio::net::TcpStream, tx: Sender) -> tokio::net::tcp::OwnedWr
         let mut is_auth = false;
         let mut req = [0; 4096];
         loop {
-            let readable = read.readable().await; // Wait for the socket to be readable
-            if readable.is_ok() {
-                // Try to read data, this may still fail with `WouldBlock`
-                // if the readiness event is a false positive.
-                match read.try_read(&mut req) {
-                    Ok(n) => {
-                        if n == 0 {
-                            let _ = tx.send(Event::Close);
-                            break;
-                        }
-                        // req.truncate(n);
-                        let _ = _handle((req[0..n]).to_vec(), &tx, &mut is_auth).await;
-                    }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        // req.clear();
-                        // req.resize(1024, 0);
-                        // req.fill(0);
-                        continue;
-                    }
-                    Err(_e) => {
+            // Wait for the socket to be readable
+            if (read.readable()).await.is_err() {
+                break;
+            }
+            // Try to read data, this may still fail with `WouldBlock`
+            // if the readiness event is a false positive.
+            match read.try_read(&mut req) {
+                Ok(n) => {
+                    if n == 0 {
                         let _ = tx.send(Event::Close);
                         break;
                     }
+                    // req.truncate(n);
+                    let _ = _handle((req[0..n]).to_vec(), &tx, &mut is_auth).await;
                 }
-            };
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    // req.resize(1024, 0);
+                    continue;
+                }
+                Err(_e) => {
+                    let _ = tx.send(Event::Close);
+                    break;
+                }
+            }
         }
     });
     write
@@ -130,7 +120,7 @@ fn framed_handle(
 }
 
 async fn _handle(message_bytes: Vec<u8>, tx: &Sender, is_auth: &mut bool) -> anyhow::Result<()> {
-    if *is_auth == false {
+    if !(*is_auth) {
         if let Ok(super::message::Flow::Next(message)) =
             TryInto::<crate::linker::Message>::try_into(message_bytes.as_slice())?
                 .content

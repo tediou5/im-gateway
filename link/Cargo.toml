@@ -21,6 +21,7 @@ axum = { version = "0.6", features = ["ws", "headers", "macros"] }
 serde = "1"
 serde_derive = "1"
 serde_json = "1"
+hex = { version = "0.4", features = ["serde"] }
 toml = "0.7"
 time = "0.3"
 md-5 = "0.10"

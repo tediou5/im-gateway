@@ -73,8 +73,8 @@ impl Response {
         } else {
             // Authorization Error, close connection
                 // FIXME: send error message to client and close connection
-                tracing::error!("Authorization Error");
                 let _ = platform.close();
+                tracing::error!("Authorization Error");
                 Err(anyhow::anyhow!("Authorization Error"))
         }
     }

@@ -13,6 +13,7 @@ time = "0.3"
 serde = "1"
 serde_derive = "1"
 serde_json = "1"
+hex = { version = "0.4", features = ["serde"] }
 axum = { version = "0.6", features = ["ws", "headers", "macros"] }
 anyhow = "1"
 tracing = "0.1"

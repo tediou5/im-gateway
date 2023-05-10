@@ -2,14 +2,14 @@
 #[serde(untagged)]
 pub(crate) enum LinkProtocol {
     Private(
-        std::collections::HashSet<String>,                    /* recvs */
-        std::collections::HashMap<String, serde_json::Value>, /* content */
+        std::collections::HashSet<String>, /* recvs */
+        #[serde(with = "hex")] Vec<u8>,    /* content */
     ),
     Group(
-        String,                                               /* chat */
-        std::collections::HashSet<String>,                    /* exclusions */
-        std::collections::HashSet<String>,                    /* additional */
-        std::collections::HashMap<String, serde_json::Value>, /* content */
+        String,                            /* chat */
+        std::collections::HashSet<String>, /* exclusions */
+        std::collections::HashSet<String>, /* additional */
+        #[serde(with = "hex")] Vec<u8>,    /* content */
     ),
     Chat(chat::Action),
 }

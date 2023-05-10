@@ -12,6 +12,19 @@ pub(crate) enum Platform {
     Web(websocket::Sender),
 }
 
+impl PartialEq for Platform {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Platform::App(s), Platform::App(o)) => s.same_channel(o),
+            (Platform::Pc(s), Platform::Pc(o)) => s.same_channel(o),
+            (Platform::Web(s), Platform::Web(o)) => s.same_channel(o),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Platform {}
+
 impl Platform {
     pub(crate) fn close(&self) -> anyhow::Result<()> {
         match self {
@@ -23,7 +36,6 @@ impl Platform {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct User {
     pub(crate) pin: std::rc::Rc<String>,
@@ -94,63 +106,40 @@ impl User {
         }
     }
 
-    pub(crate) fn send(&self, message: std::sync::Arc<Message>) -> anyhow::Result<()> {
-        let mut flag = 0;
-
-        let mut app = self.app.borrow_mut();
-        if let Some(sender) = app.as_ref().inspect(|_|flag += 1) &&
-        let Err(_) = sender.send(tcp::Event::WriteBatch(message.as_ref().into())) {
-            app.take();
-            flag -= 1;
-        };
-
-        let mut pc = self.pc.borrow_mut();
-        if let Some(sender) = pc.as_ref().inspect(|_|flag += 1) &&
-        let Err(_) = sender.send(tcp::Event::WriteBatch(message.as_ref().into())) {
-            pc.take();
-            flag -= 1;
-        };
-
-        let mut web = self.web.borrow_mut();
-        if let Some(sender) = web.as_ref().inspect(|_|flag += 1) &&
-        let Err(_) = sender.send(websocket::Event::Write(message)) {
-            web.take();
-            flag -= 1;
-        };
-
-        if flag == 0 {
-            Err(anyhow::anyhow!("user all links has been disconnected"))
-        } else {
-            Ok(())
-        }
-    }
-
-    pub(crate) fn send_batch(
+    pub(crate) fn send(
         &self,
-        messages: std::sync::Arc<Vec<String>>,
-        messages_bytes: std::sync::Arc<Vec<u8>>,
+        message_bytes: &std::sync::Arc<Vec<u8>>,
+        content: &mut Option<std::sync::Arc<String>>,
     ) -> anyhow::Result<()> {
         let mut flag = 0;
 
         let mut app = self.app.borrow_mut();
         if let Some(sender) = app.as_ref().inspect(|_|flag += 1) &&
-        let Err(_) = sender.send(tcp::Event::WriteBatch(messages_bytes.clone())) {
+        let Err(_) = sender.send(tcp::Event::WriteBatch(message_bytes.clone())) {
             app.take();
             flag -= 1;
         };
 
         let mut pc = self.pc.borrow_mut();
         if let Some(sender) = pc.as_ref().inspect(|_|flag += 1) &&
-        let Err(_) = sender.send(tcp::Event::WriteBatch(messages_bytes)) {
+        let Err(_) = sender.send(tcp::Event::WriteBatch(message_bytes.clone())) {
             pc.take();
             flag -= 1;
         };
 
         let mut web = self.web.borrow_mut();
-        if let Some(sender) = web.as_ref().inspect(|_|flag += 1) &&
-        let Err(_) = sender.send(websocket::Event::WriteBatch(messages)) {
-            web.take();
-            flag -= 1;
+        if let Some(sender) = web.as_ref().inspect(|_| flag += 1) {
+            if content.is_none() {
+                *content = Some(std::sync::Arc::new(
+                    String::from_utf8_lossy(&message_bytes.as_ref()[44..]).to_string(),
+                ))
+            }
+
+            if let Some(content) = content &&
+            let Err(_) = sender.send(websocket::Event::WriteBatch(content.clone())) {
+                web.take();
+                flag -= 1;
+            }
         };
 
         if flag == 0 {

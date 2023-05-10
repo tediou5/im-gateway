@@ -47,8 +47,6 @@ async fn main() -> anyhow::Result<()> {
                         } else {
                             redis.get_linkers().await.ok()
                         }
-                        // FIXME: pass private for test
-                        // None
                     }
                     protocol::LinkProtocol::Group(chat, ..) /* FIXME: additional should send like Private Message */
                     | protocol::LinkProtocol::Chat(protocol::chat::Action::Leave(chat, ..)) => {
@@ -57,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
                 };
 
                 if let Some(linkers) = linkers {
-                    tracing::debug!("produce into: {linkers:?}\nmessage: {proto:?}");
+                    tracing::trace!("produce into: {linkers:?}\nmessage: {proto:?}");
 
                     for linker in linkers {
                         let _ = kafka.produce(linker, proto.clone()).await;

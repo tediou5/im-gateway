@@ -1,4 +1,4 @@
-pub(crate) use message::{chat::Action, Message, VecValue};
+pub(crate) use message::VecValue;
 
 mod message;
 #[derive(Debug)]
@@ -108,13 +108,13 @@ impl Client {
         };
     }
 
-    pub(crate) async fn consume<F, U>(self, op: F)
+    pub(crate) async fn consume<F, U>(self, op: F) -> anyhow::Result<()>
     where
         F: Fn(
             rskafka::record::RecordAndOffset,
             tokio::sync::mpsc::Sender<crate::event_loop::Event>,
         ) -> U,
-        U: std::future::Future<Output = ()>,
+        U: std::future::Future<Output = anyhow::Result<()>>,
     {
         use futures::StreamExt;
         use rskafka::client::consumer::{StartOffset, StreamConsumerBuilder};
@@ -131,39 +131,42 @@ impl Client {
             .with_max_wait_ms(self.config.consumer.max_wait_ms)
             .build();
 
-        // let mut len = 0;
-        // let mut linger = 10;
+        {
+            // let mut len = 0;
+            // let mut linger = 10;
 
-        // let sleep = tokio::time::sleep(tokio::time::Duration::from_millis(10));
-        // tokio::pin!(sleep);
-        // let event_loop = crate::EVENT_LOOP.get().unwrap();
-        // loop {
-        //     tokio::select! {
-        //         _ = &mut sleep =>{
-        //             linger = if len > 10 {
-        //                 20
-        //             } else {
-        //                 10
-        //             };
+            // let sleep = tokio::time::sleep(tokio::time::Duration::from_millis(10));
+            // tokio::pin!(sleep);
+            // let event_loop = crate::EVENT_LOOP.get().unwrap();
+            // loop {
+            //     tokio::select! {
+            //         _ = &mut sleep =>{
+            //             linger = if len > 10 {
+            //                 20
+            //             } else {
+            //                 10
+            //             };
 
-        //             len = 0;
-        //             event_loop.send(crate::event_loop::Event::Flush).unwrap();
-        //         }
-        //         Some(Ok((record, _high_water_mark))) = stream.next() => {
-        //             if sleep.is_elapsed() && len == 0 {
-        //                 sleep.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_millis(linger));
-        //             }
-        //             op(record, event_loop.clone()).await;
-        //         }
-        //     }
-        // }
+            //             len = 0;
+            //             event_loop.send(crate::event_loop::Event::Flush).unwrap();
+            //         }
+            //         Some(Ok((record, _high_water_mark))) = stream.next() => {
+            //             if sleep.is_elapsed() && len == 0 {
+            //                 sleep.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_millis(linger));
+            //             }
+            //             op(record, event_loop.clone()).await;
+            //         }
+            //     }
+            // }
+        }
 
         // consume data
         while let Some(Ok((record, _high_water_mark))) = stream.next().await {
             if let Some(event_loop) = crate::EVENT_LOOP.get() {
-                op(record, event_loop.clone()).await
+                op(record, event_loop.clone()).await?
             }
         }
+        Ok(())
     }
 
     pub(crate) async fn produce<M>(&self, message: M) -> anyhow::Result<()>

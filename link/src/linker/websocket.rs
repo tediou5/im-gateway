@@ -5,7 +5,7 @@ pub(crate) type Sender = tokio::sync::mpsc::UnboundedSender<Event>;
 #[derive(Debug)]
 pub(crate) enum Event {
     Write(std::sync::Arc<Message>),
-    WriteBatch(std::sync::Arc<Vec<String>>),
+    WriteBatch(std::sync::Arc<String>),
     Close,
 }
 
@@ -21,7 +21,7 @@ pub(crate) async fn process(
         use futures::StreamExt as _;
 
         while let Some(event) = rx.next().await {
-            let contents = match event {
+            let content = match event {
                 Event::Close => break,
                 Event::WriteBatch(contents) => {
                     contents
@@ -31,26 +31,26 @@ pub(crate) async fn process(
                 }
                 Event::Write(message) => {
                     let content = serde_json::to_string(&message.content).unwrap();
-                    std::sync::Arc::new(vec![content])
+                    std::sync::Arc::new(content)
                 }
             };
 
-            for content in contents.iter() {
-                match write
-                    .send(axum::extract::ws::Message::Text(content.to_string()))
-                    .await
-                {
-                    Ok(()) => {
-                        tracing::debug!("websocket send ok");
-                        crate::axum_handler::LINK_SEND_COUNT
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    }
-                    Err(e) => {
-                        tracing::error!("websocket send error: {e:?}");
-                        break;
-                    }
-                };
-            }
+            // for content in contents.iter() {
+            match write
+                .send(axum::extract::ws::Message::Text(content.to_string()))
+                .await
+            {
+                Ok(()) => {
+                    tracing::debug!("websocket send ok");
+                    crate::axum_handler::LINK_SEND_COUNT
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                Err(e) => {
+                    tracing::error!("websocket send error: {e:?}");
+                    break;
+                }
+            };
+            // }
         }
 
         // TODO:
@@ -58,7 +58,7 @@ pub(crate) async fn process(
         // connected. Once they disconnect, then...
         // user_disconnected(&username, &uuid).await;
         tracing::info!("disconnecting");
-        let _ = write.close();
+        let _ = write.close().await;
     })
 }
 
@@ -79,7 +79,7 @@ fn handle(
 
                     let content = serde_json::from_str::<Content>(message.as_str())?;
 
-                    if let false = is_auth {
+                    if !(is_auth) {
                         if let Ok(super::message::Flow::Next(message)) = content
                             .handle(|platform| {
                                 tracing::debug!("platform connection: {platform:?}");

@@ -747,6 +747,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fed44880c466736ef9a5c5b5facefb5ed0785676d0c02d612db14e54f0d84286"
 
 [[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "http"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -847,6 +856,7 @@ dependencies = [
  "clap 4.2.4",
  "fred",
  "futures",
+ "hex",
  "md-5",
  "once_cell",
  "openraft",
@@ -875,6 +885,7 @@ dependencies = [
  "clap 4.2.4",
  "fred",
  "futures",
+ "hex",
  "once_cell",
  "rskafka",
  "serde",

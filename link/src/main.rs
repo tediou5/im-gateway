@@ -66,49 +66,23 @@ async fn main() -> anyhow::Result<()> {
     tracing::error!("starting kafka client");
 
     tokio::task::spawn(async {
-        client
-            .consume(async move |record, tx: tokio::sync::mpsc::Sender<event_loop::Event>| {
-                axum_handler::KAFKA_CONSUME_COUNT
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let message: anyhow::Result<kafka::Message> = record
-                    .record
-                    .try_into()
-                    .inspect_err(|e| tracing::error!("consumed record error: {e}"));
-
-                if let Ok(message) = message {
-                    tracing::trace!("consume message: \n{message:?}\n------ end ------");
-                    match message {
-                        kafka::Message::Private(recv, message) => {
-                            tracing::trace!("consumed private message: {recv:?}");
-                            if let Err(_e) = tx.send(event_loop::Event::Send(recv, message)).await {
-                                // FIXME: handle error
-                            };
-                        }
-                        kafka::Message::Group(chat, exclusions, additional, message) => {
-                            tracing::trace!("consumed group message: {chat:?} - {exclusions:?} + {additional:?}");
-                            if let Err(_e) = tx.send(event_loop::Event::SendBatch(
-                                chat,
-                                exclusions,
-                                additional,
-                                vec![message],
-                            )).await {
-                                // FIXME: handle error
-                            };
-                        }
-                        kafka::Message::Chat(kafka::Action::Join(chat, users)) => {
-                            if let Err(_e) = tx.send(event_loop::Event::Join(chat, users)).await {
-                                // FIXME: handle error
-                            };
-                        }
-                        kafka::Message::Chat(kafka::Action::Leave(chat, users)) => {
-                            if let Err(_e) = tx.send(event_loop::Event::Leave(chat, users)).await {
-                                // FIXME: handle error
-                            };
-                        }
+        if let Err(e) = client
+            .consume(
+                async move |record, tx: tokio::sync::mpsc::Sender<event_loop::Event>| {
+                    axum_handler::KAFKA_CONSUME_COUNT
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if let Some(event) = record.record.value {
+                        let event: event_loop::Event = serde_json::from_slice(event.as_slice())?;
+                        tracing::trace!("Kafka consume event: {event:?}");
+                        tx.send(event).await?;
                     }
-                };
-            })
-            .await;
+                    Ok(())
+                },
+            )
+            .await
+        {
+            tracing::error!("Kafka Consume Error: {:?}", e)
+        };
     });
 
     KAFKA_CLIENT.set(kafka_client).unwrap();
@@ -125,13 +99,13 @@ async fn main() -> anyhow::Result<()> {
             .enable_all()
             .build()
             .unwrap();
+
         let local = tokio::task::LocalSet::new();
         local.spawn_local(async move {
             tracing::error!("running event loop");
             event_loop::run().await.unwrap();
         });
-        // This will return once all senders are dropped and all
-        // spawned tasks have returned.
+
         rt.block_on(local);
     });
 
