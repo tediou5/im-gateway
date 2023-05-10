@@ -125,7 +125,7 @@ async fn _handle(message_bytes: Vec<u8>, tx: &Sender, is_auth: &mut bool) -> any
             TryInto::<crate::linker::Message>::try_into(message_bytes.as_slice())?
                 .content
                 .handle(|platform| {
-                    tracing::error!("platform connection: {platform:?}");
+                    tracing::trace!("platform connection: {platform:?}");
                     match platform {
                         "app" => Ok(super::Platform::App(tx.clone())),
                         "pc" => Ok(super::Platform::Pc(tx.clone())),

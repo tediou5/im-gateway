@@ -42,7 +42,7 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    tracing::error!("version: 2023/5/9-11:55");
+    tracing::error!("version: 2023/5/10-18:01");
 
     let local_addr = socket_addr::ipv4::local_addr().await?;
     tracing::error!("local addr: {local_addr:?}");

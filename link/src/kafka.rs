@@ -80,10 +80,11 @@ impl Client {
         let producer = producer.build(RecordAggregator::new(
             config.producer.max_batch_size, // maximum bytes
         ));
-        let producer = std::sync::Arc::new(producer);
+
         tokio::task::spawn(async move {
             use tokio_stream::StreamExt as _;
 
+            let producer = std::sync::Arc::new(producer);
             while let Some(message) = rx.next().await {
                 let p = producer.clone();
                 tokio::task::spawn(async move {
@@ -174,7 +175,7 @@ impl Client {
         M: Into<rskafka::record::Record> + std::fmt::Debug,
     {
         tracing::debug!("kafka produce: {message:?}");
-        crate::axum_handler::SEND_REQUEST_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        crate::axum_handler::KAFKA_PRODUCE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.bussiness_client.send(message.into())?;
         Ok(())
     }
