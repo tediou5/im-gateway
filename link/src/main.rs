@@ -10,9 +10,9 @@
 mod axum_handler;
 mod config;
 mod conhash;
-mod event_loop;
 mod kafka;
 mod linker;
+mod processor;
 mod raft;
 mod redis;
 mod socket_addr;
@@ -22,7 +22,7 @@ use once_cell::sync::OnceCell;
 static AUTH_URL: OnceCell<String> = OnceCell::new();
 static HTTP_CLIENT: OnceCell<reqwest::Client> = OnceCell::new();
 
-static EVENT_LOOP: OnceCell<tokio::sync::mpsc::Sender<event_loop::Event>> = OnceCell::new();
+static DISPATCHER: OnceCell<tokio::sync::mpsc::Sender<processor::Event>> = OnceCell::new();
 static REDIS_CLIENT: OnceCell<redis::Client> = OnceCell::new();
 static KAFKA_CLIENT: OnceCell<kafka::Client> = OnceCell::new();
 type TokioSender<T> = tokio::sync::mpsc::UnboundedSender<T>;
@@ -38,11 +38,11 @@ struct Args {
     config: String,
 }
 
-#[tokio::main(flavor = "multi_thread")]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    tracing::error!("version: 2023/5/10-18:01");
+    tracing::error!("version: 2023/5/11-09:58");
 
     let local_addr = socket_addr::ipv4::local_addr().await?;
     tracing::error!("local addr: {local_addr:?}");
@@ -62,65 +62,64 @@ async fn main() -> anyhow::Result<()> {
 
     let kafka_client =
         kafka::Client::new(local_addr.to_string().as_str(), config.kafka.clone()).await?;
-    let client = kafka_client.clone();
+    KAFKA_CLIENT.set(kafka_client.clone()).unwrap();
+
+    let client = kafka_client;
     tracing::error!("starting kafka client");
 
-    tokio::task::spawn(async {
-        if let Err(e) = client
-            .consume(
-                async move |record, tx: tokio::sync::mpsc::Sender<event_loop::Event>| {
-                    axum_handler::KAFKA_CONSUME_COUNT
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if let Some(event) = record.record.value {
-                        let event: event_loop::Event = serde_json::from_slice(event.as_slice())?;
-                        tracing::trace!("Kafka consume event: {event:?}");
-                        tx.send(event).await?;
-                    }
-                    Ok(())
-                },
-            )
-            .await
-        {
-            tracing::error!("Kafka Consume Error: {:?}", e)
-        };
-    });
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            // TODO: init & run raft
 
-    KAFKA_CLIENT.set(kafka_client).unwrap();
+            let worker_number = num_cpus::get() - 1;
 
-    // TODO: init & run raft
+            tokio::task::spawn_local(async move {
+                processor::run(worker_number).await.unwrap();
+            });
 
-    tokio::task::spawn(async {
-        tracing::error!("running http server");
-        axum_handler::run(config.http).await;
-    });
+            tokio::task::spawn_local(async {
+                tracing::error!("running http server");
+                axum_handler::run(config.http).await;
+            });
 
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
+            tokio::task::spawn_local(async move {
+                if let Err(e) = client
+                    .consume(
+                        async move |record /* , tx: tokio::sync::mpsc::Sender<processor::Event> */| {
+                            axum_handler::KAFKA_CONSUME_COUNT
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if let Some(event) = record.record.value &&
+                            let Some(dispatcher) = DISPATCHER.get() &&
+                            let Ok(event) = serde_json::from_slice(event.as_slice()) &&
+                            let Ok(_) = dispatcher.send(event).await {
+                                Ok(())
+                            } else {
+                                Err(anyhow::anyhow!("Kafka Consume Error"))
+                            }
+                        },
+                    )
+                    .await
+                {
+                    tracing::error!("Kafka Consume Error: {:?}", e)
+                };
+            });
 
-        let local = tokio::task::LocalSet::new();
-        local.spawn_local(async move {
-            tracing::error!("running event loop");
-            event_loop::run().await.unwrap();
-        });
+            tracing::error!("handle tcp connect");
+            while let Ok((stream, _)) = tcp_listener.accept().await {
+                // FIXME:
+                // stream.set_nodelay(true)?;
+                tokio::task::spawn_local(async move {
+                    // use std::sync::atomic::Ordering::Relaxed;
 
-        rt.block_on(local);
-    });
+                    // Process each socket concurrently.
+                    // axum_handler::LINK_COUNT.fetch_add(1, Relaxed);
+                    linker::tcp::auth(stream).await?;
+                    // axum_handler::LINK_COUNT.fetch_sub(1, Relaxed);
+                    Ok::<(), anyhow::Error>(())
+                });
+            }
+        })
+        .await;
 
-    tracing::error!("handle tcp connect");
-    while let Ok((stream, _)) = tcp_listener.accept().await {
-        // FIXME:
-        // stream.set_nodelay(true)?;
-        tokio::spawn(async move {
-            use std::sync::atomic::Ordering::Relaxed;
-
-            // Process each socket concurrently.
-            axum_handler::LINK_COUNT.fetch_add(1, Relaxed);
-            linker::tcp::process(stream).await;
-            axum_handler::LINK_COUNT.fetch_sub(1, Relaxed);
-        });
-    }
     Ok(())
 }

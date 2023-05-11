@@ -5,35 +5,11 @@ mod message;
 pub(crate) mod tcp;
 pub(crate) mod websocket;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) enum Platform {
-    App(tcp::Sender),
-    Pc(tcp::Sender),
-    Web(websocket::Sender),
-}
-
-impl PartialEq for Platform {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Platform::App(s), Platform::App(o)) => s.same_channel(o),
-            (Platform::Pc(s), Platform::Pc(o)) => s.same_channel(o),
-            (Platform::Web(s), Platform::Web(o)) => s.same_channel(o),
-            _ => false,
-        }
-    }
-}
-
-impl Eq for Platform {}
-
-impl Platform {
-    pub(crate) fn close(&self) -> anyhow::Result<()> {
-        match self {
-            Platform::App(sender) => sender.send(tcp::Event::Close)?,
-            Platform::Pc(sender) => sender.send(tcp::Event::Close)?,
-            Platform::Web(sender) => sender.send(websocket::Event::Close)?,
-        };
-        Ok(())
-    }
+    App(tokio::net::TcpStream),
+    Pc(tokio::net::TcpStream),
+    Web(axum::extract::ws::WebSocket),
 }
 
 #[derive(Debug, Clone)]
@@ -83,21 +59,25 @@ impl User {
         }
     }
 
+    // TODO: handle socket stream here
     pub(crate) fn update(&self, platform: Platform) {
         match platform {
-            Platform::App(sender) => {
+            Platform::App(stream) => {
+                let sender = tcp::process(stream);
                 if let Some(old) = self.app.replace(Some(sender)) {
                     tracing::error!("{}: remove old > app < connection", self.pin.as_str());
                     let _ = old.send(tcp::Event::Close);
                 };
             }
-            Platform::Pc(sender) => {
+            Platform::Pc(stream) => {
+                let sender = tcp::process(stream);
                 if let Some(old) = self.pc.replace(Some(sender)) {
                     tracing::error!("{}: remove old > pc < connection", self.pin.as_str());
                     let _ = old.send(tcp::Event::Close);
                 };
             }
-            Platform::Web(sender) => {
+            Platform::Web(socket) => {
+                let sender = websocket::process(socket);
                 if let Some(old) = self.web.replace(Some(sender)) {
                     tracing::error!("{}: remove old > web < connection", self.pin.as_str());
                     let _ = old.send(websocket::Event::Close);

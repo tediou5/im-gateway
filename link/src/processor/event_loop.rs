@@ -1,53 +1,98 @@
-#[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
-#[serde(untagged)]
-pub(super) enum Event {
-    #[serde(skip)]
+pub(super) enum Private {
     Login(
-        String,      /* uid */
-        Vec<String>, /* chats */
+        String,                      /* pin */
+        Vec<std::sync::Arc<String>>, /* chats */
         crate::linker::Platform,
     ),
-    Private(
-        std::collections::HashSet<String>, /* recvs */
-        #[serde(with = "hex")] Vec<u8>,
-    ),
-    Group(
+    Message(String /* recvs */, std::sync::Arc<Vec<u8>>),
+}
+
+pub(super) enum Group {
+    Message(
         String,                            /* chat */
         std::collections::HashSet<String>, /* exclusions */
         std::collections::HashSet<String>, /* additional */
-        #[serde(with = "hex")] Vec<u8>,
+        std::sync::Arc<Vec<u8>>,
     ),
-    Chat(chat::Action),
+    Chat(super::chat::Action),
 }
 
-pub(super) async fn run() -> anyhow::Result<()> {
-    let (collect_tx, collect_rx) = tokio::sync::mpsc::channel::<Event>(20480);
+#[derive(Clone)]
+pub(super) struct EventLoop {
+    name: std::rc::Rc<String>,
+    pub(super) mailbox: tokio::sync::mpsc::Sender<Private>,
+}
+
+impl crate::conhash::Node for EventLoop {
+    fn name(&self) -> String {
+        self.name.to_string()
+    }
+}
+
+pub(super) fn run(worker_number: usize, group_recver: flume::Receiver<Group>) -> EventLoop {
+    let (collect_tx, collect_rx) = tokio::sync::mpsc::channel::<Private>(2048);
     let mut collect_rx = tokio_stream::wrappers::ReceiverStream::new(collect_rx);
     // let (collect_tx, collect_rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     // let mut collect_rx = tokio_stream::wrappers::UnboundedReceiverStream::new(collect_rx);
-    crate::EVENT_LOOP.set(collect_tx).unwrap();
+    // crate::EVENT_LOOP.set(collect_tx).unwrap();
 
-    let mut users: ahash::AHashMap<std::rc::Rc<String>, crate::linker::User> =
-        ahash::AHashMap::new();
-    let mut chats: ahash::AHashMap<String, std::collections::HashSet<crate::linker::User>> =
-        ahash::AHashMap::new();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
 
-    use tokio_stream::StreamExt as _;
+        let local = tokio::task::LocalSet::new();
+        let local_set = local.run_until(async {
+            tokio::task::spawn_local(async move {
+                tracing::error!("running event loop: >>> processor-event-loop-{worker_number} <<<");
+                use tokio_stream::StreamExt as _;
 
-    while let Some(event) = collect_rx.next().await {
-        _handle(&mut users, &mut chats, event).await?;
+                let mut users: ahash::AHashMap<std::rc::Rc<String>, crate::linker::User> =
+                    ahash::AHashMap::new();
+                let mut chats: ahash::AHashMap<
+                    std::sync::Arc<String>,
+                    std::collections::HashSet<crate::linker::User>,
+                > = ahash::AHashMap::new();
+
+                loop {
+                    tokio::select! {
+                        Some(private) = collect_rx.next() => {
+                            // TODO: handle private event
+                            if let Err(_e) = process_private(&mut users, &mut chats, private).await {
+                                // TODO: handle error
+                            };
+                        },
+                        Ok(group) = group_recver.recv_async() => {
+                            // TODO: handle group event
+                            if let Err(_e) = process_group(&mut users, &mut chats, group).await {
+                                // TODO: handle error
+                            };
+                        },
+                    };
+                }
+            });
+        });
+
+        rt.block_on(local_set);
+    });
+
+    EventLoop {
+        name: format!("processor-event-loop-{worker_number}").into(),
+        mailbox: collect_tx,
     }
-    // }
-    Ok(())
 }
 
-async fn _handle(
+async fn process_private(
     users: &mut ahash::AHashMap<std::rc::Rc<String>, crate::linker::User>,
-    chats: &mut ahash::AHashMap<String, std::collections::HashSet<crate::linker::User>>,
-    event: Event,
+    chats: &mut ahash::AHashMap<
+        std::sync::Arc<String>,
+        std::collections::HashSet<crate::linker::User>,
+    >,
+    event: Private,
 ) -> anyhow::Result<()> {
     match event {
-        Event::Login(user, chat_list, platform) => {
+        Private::Login(user, chat_list, platform) => {
             tracing::error!("{user} login");
             let user = std::rc::Rc::new(user);
             let user_connection = users
@@ -66,27 +111,40 @@ async fn _handle(
                 });
                 member.insert(user_connection.clone());
             }
-            tokio::task::spawn(async move {
+            tokio::task::spawn_local(async move {
                 let redis_client = crate::REDIS_CLIENT.get().unwrap();
                 redis_client.regist(regiest_chats).await?;
                 Ok::<(), anyhow::Error>(())
             });
         }
-        Event::Private(recv_list, message) => {
+        Private::Message(pin, message) => {
             let mut content = None;
             let message = std::sync::Arc::new(message);
-            for recv in recv_list {
-                if let Some(sender) = users.get_mut(&recv) {
-                    tracing::trace!("send user: {recv}");
-                    if sender.send(&message, &mut content).is_err() {
-                        tracing::debug!("remove user: {recv}");
-                        users.remove(&recv);
-                    };
-                }
+
+            if let Some(sender) = users.get_mut(&pin) {
+                tracing::trace!("send user: {pin}");
+                if sender.send(&message, &mut content).is_err() {
+                    tracing::debug!("remove user: {pin}");
+                    users.remove(&pin);
+                };
             }
         }
-        Event::Group(chat, exclusions, additional, message) => {
-            if let Some(online) = chats.get_mut(chat.as_str()) {
+    }
+
+    Ok(())
+}
+
+async fn process_group(
+    users: &mut ahash::AHashMap<std::rc::Rc<String>, crate::linker::User>,
+    chats: &mut ahash::AHashMap<
+        std::sync::Arc<String>,
+        std::collections::HashSet<crate::linker::User>,
+    >,
+    event: Group,
+) -> anyhow::Result<()> {
+    match event {
+        Group::Message(chat, exclusions, additional, message) => {
+            if let Some(online) = chats.get_mut(&chat) {
                 // TODO: FIXME:
                 // let mut recv_list: std::collections::HashSet<&str> =
                 //     online.iter().map(|one| one.as_str()).collect();
@@ -116,7 +174,15 @@ async fn _handle(
                 tracing::error!("no such chat: {chat}");
             }
         }
-        Event::Chat(chat::Action::Join(chat, members)) => {
+        Group::Chat(crate::processor::chat::Action::Leave(chat, members)) => {
+            if let Some(online) = chats.get_mut(&chat) {
+                for member in members {
+                    let user = crate::linker::User::from_pin(member.into());
+                    online.remove(&user);
+                }
+            }
+        }
+        Group::Chat(crate::processor::chat::Action::Join(chat, members)) => {
             tracing::debug!("join [{chat}]");
             let members = _join(users, members);
             if !members.is_empty() {
@@ -125,7 +191,7 @@ async fn _handle(
                     if let Some(redis_client) = crate::REDIS_CLIENT.get() {
                         tracing::debug!("add [{chat}] into router");
                         redis_client
-                            .regist(vec![chat])
+                            .regist(vec![chat.to_string()])
                             .await
                             .inspect_err(|e| tracing::error!("regist error: {e}"))?;
                     }
@@ -133,15 +199,9 @@ async fn _handle(
                 members.into_iter().collect_into(online);
             }
         }
-        Event::Chat(chat::Action::Leave(chat, members)) => {
-            if let Some(online) = chats.get_mut(chat.as_str()) {
-                for member in members {
-                    let user = crate::linker::User::from_pin(member.into());
-                    online.remove(&user);
-                }
-            }
-        }
+        Group::Chat(super::chat::Action::Notice(_, _)) => todo!(),
     }
+
     Ok(())
 }
 
@@ -160,19 +220,10 @@ fn _join(
     users_keys
 }
 
-pub(crate) mod chat {
-    #[derive(Debug, Clone, PartialEq, serde_derive::Deserialize, serde_derive::Serialize)]
-    #[serde(rename_all = "snake_case")]
-    pub(crate) enum Action {
-        Join(String, std::collections::HashSet<String>),
-        Leave(String, std::collections::HashSet<String>),
-    }
-}
-
 #[cfg(test)]
 mod test {
-    use super::{Event, _join};
     use crate::linker::User;
+    use crate::processor::{event_loop::_join, Event};
     use std::{collections::HashSet, rc::Rc};
 
     const HEX_STRING: &str = "7b2264617461223a207b22636861744964223a2022222c20226d7367466f726d6174223a202254455854222c20226d73674964223a20223261626665366266303331333461356238613831623262326531373236643461222c20226e6f7469636554797065223a2022555345525f424153455f494e464f222c2022626f6479223a20227b5c2261707049645c223a5c2253564f4148626c705c222c5c226176617461725c223a5c226176617461725c222c5c226973426f745c223a66616c73652c5c226e69636b6e616d655c223a5c227465737420757365725c222c5c2270696e5c223a5c2232663734393634616132383734663066383032613761323638653061653632375c222c5c227365785c223a66616c73652c5c227569645c223a5c22515245314c4f55425c227d222c2022636861744d736754797065223a20224e6f74696365222c202266726f6d4964223a20223266373439363461613238373466306638303261376132363865306165363237222c20226170704964223a202253564f4148626c70222c20226368617454797065223a202250726976617465222c202274696d657374616d70223a20313638323431373837323337367d2c202270726f746f636f6c223a20224d657373616765227d";
@@ -180,14 +231,13 @@ mod test {
     #[test]
     fn from_kafaka_record_private_to_event() {
         let record_private =
-            serde_json::to_vec(&serde_json::json!([["uu_1"], HEX_STRING])).unwrap();
-
-        let record_private: Event = serde_json::from_slice(record_private.as_slice()).unwrap();
+            serde_json::to_string(&serde_json::json!([["uu_1"], HEX_STRING])).unwrap();
 
         let private = Event::Private(
             HashSet::from_iter(["uu_1".to_string()]),
             hex::decode(HEX_STRING).unwrap(),
         );
+        let private = serde_json::to_string(&private).unwrap();
 
         assert_eq!(record_private, private);
     }
@@ -195,9 +245,9 @@ mod test {
     #[test]
     fn from_kafaka_record_group_to_event() {
         let record_group =
-            serde_json::to_vec(&serde_json::json!(["cc_1", [], [], HEX_STRING])).unwrap();
+            serde_json::to_string(&serde_json::json!(["cc_1", [], [], HEX_STRING])).unwrap();
 
-        let record_group: Event = serde_json::from_slice(record_group.as_slice()).unwrap();
+        // let record_group: Event = serde_json::from_slice(record_group.as_slice()).unwrap();
 
         let group = Event::Group(
             "cc_1".to_string(),
@@ -205,6 +255,7 @@ mod test {
             HashSet::new(),
             hex::decode(HEX_STRING).unwrap(),
         );
+        let group = serde_json::to_string(&group).unwrap();
 
         assert_eq!(record_group, group);
     }

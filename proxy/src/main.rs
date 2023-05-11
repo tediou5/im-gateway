@@ -48,6 +48,7 @@ async fn main() -> anyhow::Result<()> {
                             redis.get_linkers().await.ok()
                         }
                     }
+                    protocol::LinkProtocol::Chat(protocol::chat::Action::Notice(..)) => redis.get_linkers().await.ok(),
                     protocol::LinkProtocol::Group(chat, ..) /* FIXME: additional should send like Private Message */
                     | protocol::LinkProtocol::Chat(protocol::chat::Action::Leave(chat, ..)) => {
                         redis.get_router(chat.as_str()).await.ok()

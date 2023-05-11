@@ -81,13 +81,13 @@ impl Client {
             config.producer.max_batch_size, // maximum bytes
         ));
 
-        tokio::task::spawn(async move {
+        tokio::task::spawn_local(async move {
             use tokio_stream::StreamExt as _;
 
             let producer = std::sync::Arc::new(producer);
             while let Some(message) = rx.next().await {
                 let p = producer.clone();
-                tokio::task::spawn(async move {
+                tokio::task::spawn_local(async move {
                     Self::_handle(p, message).await;
                 });
             }
@@ -113,7 +113,7 @@ impl Client {
     where
         F: Fn(
             rskafka::record::RecordAndOffset,
-            tokio::sync::mpsc::Sender<crate::event_loop::Event>,
+            /* tokio::sync::mpsc::Sender<crate::processor::Event>, */
         ) -> U,
         U: std::future::Future<Output = anyhow::Result<()>>,
     {
@@ -163,9 +163,9 @@ impl Client {
 
         // consume data
         while let Some(Ok((record, _high_water_mark))) = stream.next().await {
-            if let Some(event_loop) = crate::EVENT_LOOP.get() {
-                op(record, event_loop.clone()).await?
-            }
+            // if let Some(dispatcher) = crate::DISPATCHER.get() {
+            op(record /* , dispatcher.clone() */).await?
+            // }
         }
         Ok(())
     }

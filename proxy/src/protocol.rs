@@ -41,8 +41,9 @@ pub(crate) mod chat {
     #[derive(Debug, Clone, PartialEq, serde_derive::Deserialize, serde_derive::Serialize)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum Action {
-        Join(String, std::collections::HashSet<String>),
-        Leave(String, std::collections::HashSet<String>),
+        Join(String /* chat */, std::collections::HashSet<String>),
+        Leave(String /* chat */, std::collections::HashSet<String>),
+        Notice(String /* chat */, String),
     }
 }
 

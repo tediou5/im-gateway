@@ -4,44 +4,62 @@ pub(crate) type Sender = tokio::sync::mpsc::UnboundedSender<Event>;
 
 #[derive(Debug)]
 pub(crate) enum Event {
-    Write(std::sync::Arc<Message>),
     WriteBatch(std::sync::Arc<String>),
     Close,
 }
 
-pub(crate) async fn process(
-    ws: axum::extract::ws::WebSocketUpgrade,
+pub(crate) async fn websocket(
+    websocket: axum::extract::ws::WebSocketUpgrade,
 ) -> impl axum::response::IntoResponse {
-    ws.on_upgrade(async move |socket| {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-        let mut rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
-        let mut write = handle(socket, tx);
+    websocket.on_upgrade(async move |mut socket| {
+        let auth = match socket.recv().await {
+            Some(Ok(axum::extract::ws::Message::Text(message))) => message,
+            _ => return,
+        };
 
+        let content = match serde_json::from_str::<Content>(auth.as_str()) {
+            Ok(content) => content,
+            Err(_) => return,
+        };
+
+        let _ = content
+            .handle_auth(async move |platform, message| {
+                let content = message.content;
+                let content = serde_json::to_string(&content)?;
+                tracing::trace!("platform connection: {platform:?} with baseinfo:\n{content:?}");
+                if let Err(e) = socket.send(axum::extract::ws::Message::Text(content)).await {
+                    return Err(anyhow::anyhow!("failed to write to socket; err = {e}"));
+                }
+                match platform.as_str() {
+                    "web" => Ok(super::Platform::Web(socket)),
+                    _ => Err(anyhow::anyhow!("unexpected platform")),
+                }
+            })
+            .await;
+    })
+}
+
+pub(crate) fn process(socket: axum::extract::ws::WebSocket) -> Sender {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    let mut rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
+    let mut write = handle(socket, tx.clone());
+
+    tokio::task::spawn_local(async move {
         use futures::SinkExt as _;
         use futures::StreamExt as _;
 
         while let Some(event) = rx.next().await {
             let content = match event {
                 Event::Close => break,
-                Event::WriteBatch(contents) => {
-                    contents
-                    // FIXME:
-                    // let len = messages.len() as u64;
-                    // write.send(messages).await.map(|_| 1)
-                }
-                Event::Write(message) => {
-                    let content = serde_json::to_string(&message.content).unwrap();
-                    std::sync::Arc::new(content)
-                }
+                Event::WriteBatch(contents) => contents,
             };
 
-            // for content in contents.iter() {
             match write
                 .send(axum::extract::ws::Message::Text(content.to_string()))
                 .await
             {
                 Ok(()) => {
-                    tracing::debug!("websocket send ok");
+                    tracing::trace!("websocket send ok");
                     crate::axum_handler::LINK_SEND_COUNT
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
@@ -50,16 +68,12 @@ pub(crate) async fn process(
                     break;
                 }
             };
-            // }
         }
 
-        // TODO:
-        // user_ws_rx stream will keep processing as long as the user stays
-        // connected. Once they disconnect, then...
-        // user_disconnected(&username, &uuid).await;
-        tracing::info!("disconnecting");
         let _ = write.close().await;
-    })
+    });
+
+    tx
 }
 
 fn handle(
@@ -70,37 +84,13 @@ fn handle(
 
     let (sink, mut input) = socket.split();
 
-    tokio::task::spawn(async move {
-        let mut is_auth = false;
+    tokio::task::spawn_local(async move {
         while let Some(Ok(message)) = input.next().await {
             match message {
                 axum::extract::ws::Message::Text(message) => {
                     tracing::trace!("[websocket] received message: {message:?}");
 
                     if let Ok(content) = serde_json::from_str::<Content>(message.as_str()) {
-                        if !(is_auth) {
-                            if let Ok(super::message::Flow::Next(message)) = content
-                                .handle(|platform| {
-                                    tracing::debug!("platform connection: {platform:?}");
-                                    match platform {
-                                        "web" => Ok(super::Platform::Web(tx.clone())),
-                                        _ => Err(anyhow::anyhow!("unexpected platform")),
-                                    }
-                                })
-                                .await
-                            {
-                                tx.send(Event::Write(message.into()))?;
-                                is_auth = true;
-                            } else {
-                                // close the connection when the first message is not auth message.
-                                tracing::error!(
-                                    "close the connection when the first message is not auth message."
-                                );
-                                let _ = tx.send(Event::Close);
-                                return Err(anyhow::anyhow!("Auth Error: must authenticate first"));
-                            };
-                        }
-    
                         let kafka = crate::KAFKA_CLIENT
                             .get()
                             .ok_or(anyhow::anyhow!("kafka is not available"))?;

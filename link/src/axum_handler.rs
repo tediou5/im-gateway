@@ -109,7 +109,7 @@ pub(super) async fn run(config: crate::config::Http) {
     let app = Router::new()
         .route(
             config.websocket_router.as_str(),
-            get(crate::linker::websocket::process),
+            get(crate::linker::websocket::websocket),
         )
         .route("/count", get(get_count))
         .route("/count", delete(clean_count));

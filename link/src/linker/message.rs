@@ -1,10 +1,5 @@
 pub(crate) struct MessageCodec;
 
-pub(crate) enum Flow {
-    Continue,
-    Next(Message),
-}
-
 #[derive(Debug, Clone, serde_derive::Serialize, serde_derive::Deserialize)]
 #[serde(tag = "protocol", content = "data")]
 pub(crate) enum Content {
@@ -55,30 +50,25 @@ impl Content {
         Content::Message { _ext: data }
     }
 
-    pub(super) async fn handle<F>(&self, platform_op: F) -> anyhow::Result<Flow>
+    pub(super) async fn handle_auth<F, U>(self, platform_op: F) -> anyhow::Result<()>
     where
-        F: Fn(&str) -> anyhow::Result<super::Platform>,
+        F: FnOnce(String, Message) -> U,
+        U: std::future::Future<Output = anyhow::Result<super::Platform>>,
     {
-        match self {
-            Content::Heart { .. } => {
-                // TODO:
-                Ok(Flow::Continue)
-            }
-            Content::Connect {
-                app_id,
-                token,
-                platform,
-            } => {
-                let sender = platform_op(platform.to_lowercase().as_str())?;
-                let message = super::auth::auth(app_id.as_str(), token.as_str(), platform.as_str())
-                    .await?
-                    .check(app_id, sender)
-                    .await?;
-                Ok(Flow::Next(message))
-            }
-            Content::Message { _ext } => Ok(Flow::Continue),
-            Content::Response { _ext } => Ok(Flow::Continue),
+        if let Content::Connect {
+            app_id,
+            token,
+            platform,
+        } = self
+        {
+            // let sender = platform_op(platform.to_lowercase().as_str())?;
+            super::auth::auth(app_id.as_str(), token.as_str(), platform.as_str())
+                .await?
+                .check(app_id, platform, platform_op)
+                .await?;
         }
+
+        Ok(())
     }
 }
 
@@ -156,6 +146,17 @@ impl TryFrom<&[u8]> for Message {
             timestamp,
             content,
         })
+    }
+}
+
+impl From<&Message> for Vec<u8> {
+    fn from(val: &Message) -> Self {
+        use tokio_util::codec::Encoder as _;
+
+        let mut codec = crate::linker::MessageCodec {};
+        let mut dst = bytes::BytesMut::new();
+        let _ = codec.encode(val, &mut dst);
+        dst.to_vec()
     }
 }
 
