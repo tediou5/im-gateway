@@ -60,8 +60,6 @@ impl Client {
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<rskafka::record::Record>();
         let mut rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
-        // let (tx, rx) = tokio::sync::mpsc::channel::<rskafka::record::Record>(10240);
-        // let mut rx = tokio_stream::wrappers::ReceiverStream::new(rx);
 
         // construct batch producer
         let mut producer = BatchProducerBuilder::new(producer.into());

@@ -19,7 +19,6 @@ impl Client {
         let perf = PerformanceConfig::default();
         let policy = ReconnectPolicy::default();
         let pool = RedisPool::new(config, Some(perf), Some(policy), 100)?;
-        // let client = RedisClient::new(config, Some(perf), Some(policy));
 
         let _ = pool.connect();
         pool.wait_for_connect().await?;

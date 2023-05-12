@@ -48,8 +48,6 @@ pub(crate) fn process(stream: tokio::net::TcpStream) -> Sender {
     tracing::trace!("ready to process tcp message: {:?}", stream.peer_addr());
     // Use an unbounded channel to handle buffering and flushing of messages
     // to the event source...
-    // let (tx, rx) = tokio::sync::mpsc::channel::<TcpEvent>(10240);
-    // let mut rx = tokio_stream::wrappers::ReceiverStream::new(rx);
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     let mut rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
 

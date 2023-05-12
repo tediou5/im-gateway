@@ -72,11 +72,13 @@ async fn main() -> anyhow::Result<()> {
             // TODO: init & run raft
 
             let kafka_client =
-            kafka::Client::new(local_addr.to_string().as_str(), config.kafka.clone()).await.unwrap();
+                kafka::Client::new(local_addr.to_string().as_str(), config.kafka.clone())
+                    .await
+                    .unwrap();
             KAFKA_CLIENT.set(kafka_client.clone()).unwrap();
 
             let client = kafka_client;
-            tracing::error!("starting kafka client");    
+            tracing::error!("starting kafka client");
 
             tokio::task::spawn_local(async move {
                 processor::run(core_ids).await.unwrap();
@@ -89,11 +91,10 @@ async fn main() -> anyhow::Result<()> {
 
             tokio::task::spawn_local(async move {
                 if let Err(e) = client
-                    .consume(
-                        async move |record /* , tx: tokio::sync::mpsc::Sender<processor::Event> */| {
-                            axum_handler::KAFKA_CONSUME_COUNT
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            if let Some(event) = record.record.value &&
+                    .consume(async move |record| {
+                        axum_handler::KAFKA_CONSUME_COUNT
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if let Some(event) = record.record.value &&
                             let Some(dispatcher) = DISPATCHER.get() &&
                             let Ok(event) = serde_json::from_slice(event.as_slice()) &&
                             let Ok(_) = dispatcher.send(event).await {
@@ -101,8 +102,7 @@ async fn main() -> anyhow::Result<()> {
                             } else {
                                 Err(anyhow::anyhow!("Kafka Consume Error"))
                             }
-                        },
-                    )
+                    })
                     .await
                 {
                     tracing::error!("Kafka Consume Error: {:?}", e)
@@ -111,20 +111,15 @@ async fn main() -> anyhow::Result<()> {
 
             tracing::error!("handle tcp connect");
             while let Ok((stream, remote_addr)) = tcp_listener.accept().await {
-                // stream.set_nodelay(true)?;
                 tokio::task::spawn_local(async move {
-                    // use std::sync::atomic::Ordering::Relaxed;
-
                     tracing::trace!("{remote_addr} connected");
                     // Process each socket concurrently.
-                    // axum_handler::LINK_COUNT.fetch_add(1, Relaxed);
-                    if let Err(e) = linker::tcp::auth(stream).await{
+                    if let Err(e) = linker::tcp::auth(stream).await {
                         tracing::error!("tcp auth error: {e:?}");
                     } else {
                         tracing::trace!("{remote_addr} authed");
                     };
 
-                    // axum_handler::LINK_COUNT.fetch_sub(1, Relaxed);
                     Ok::<(), anyhow::Error>(())
                 });
             }

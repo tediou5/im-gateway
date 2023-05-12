@@ -26,10 +26,7 @@ impl crate::conhash::Node for EventLoop {
     }
 }
 
-pub(super) fn run(
-    core_id: core_affinity::CoreId,
-    // group_recver: flume::Receiver<Group>,
-) -> EventLoop {
+pub(super) fn run(core_id: core_affinity::CoreId) -> EventLoop {
     let (collect_tx, collect_rx) = tokio::sync::mpsc::channel::<Event>(2048);
     let mut collect_rx = tokio_stream::wrappers::ReceiverStream::new(collect_rx);
     // let (collect_tx, collect_rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
@@ -247,8 +244,6 @@ mod test {
     fn from_kafaka_record_group_to_event() {
         let record_group =
             serde_json::to_string(&serde_json::json!(["cc_1", [], [], HEX_STRING])).unwrap();
-
-        // let record_group: Event = serde_json::from_slice(record_group.as_slice()).unwrap();
 
         let group = Event::Group(
             "cc_1".to_string(),

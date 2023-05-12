@@ -62,8 +62,6 @@ impl Client {
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<rskafka::record::Record>();
         let mut rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
-        // let (tx, rx) = tokio::sync::mpsc::channel::<rskafka::record::Record>(10240);
-        // let mut rx = tokio_stream::wrappers::ReceiverStream::new(rx);
 
         // construct batch producer
         let mut producer = BatchProducerBuilder::new(producer.into());
@@ -111,10 +109,7 @@ impl Client {
 
     pub(crate) async fn consume<F, U>(self, op: F) -> anyhow::Result<()>
     where
-        F: Fn(
-            rskafka::record::RecordAndOffset,
-            /* tokio::sync::mpsc::Sender<crate::processor::Event>, */
-        ) -> U,
+        F: Fn(rskafka::record::RecordAndOffset) -> U,
         U: std::future::Future<Output = anyhow::Result<()>>,
     {
         use futures::StreamExt;
@@ -132,40 +127,9 @@ impl Client {
             .with_max_wait_ms(self.config.consumer.max_wait_ms)
             .build();
 
-        {
-            // let mut len = 0;
-            // let mut linger = 10;
-
-            // let sleep = tokio::time::sleep(tokio::time::Duration::from_millis(10));
-            // tokio::pin!(sleep);
-            // let event_loop = crate::EVENT_LOOP.get().unwrap();
-            // loop {
-            //     tokio::select! {
-            //         _ = &mut sleep =>{
-            //             linger = if len > 10 {
-            //                 20
-            //             } else {
-            //                 10
-            //             };
-
-            //             len = 0;
-            //             event_loop.send(crate::event_loop::Event::Flush).unwrap();
-            //         }
-            //         Some(Ok((record, _high_water_mark))) = stream.next() => {
-            //             if sleep.is_elapsed() && len == 0 {
-            //                 sleep.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_millis(linger));
-            //             }
-            //             op(record, event_loop.clone()).await;
-            //         }
-            //     }
-            // }
-        }
-
         // consume data
         while let Some(Ok((record, _high_water_mark))) = stream.next().await {
-            // if let Some(dispatcher) = crate::DISPATCHER.get() {
-            op(record /* , dispatcher.clone() */).await?
-            // }
+            op(record).await?
         }
         Ok(())
     }

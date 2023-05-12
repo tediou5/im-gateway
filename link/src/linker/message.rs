@@ -61,7 +61,6 @@ impl Content {
             platform,
         } = self
         {
-            // let sender = platform_op(platform.to_lowercase().as_str())?;
             super::auth::auth(app_id.as_str(), token.as_str(), platform.as_str())
                 .await?
                 .check(app_id, platform.to_lowercase(), platform_op)

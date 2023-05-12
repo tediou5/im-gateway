@@ -41,11 +41,8 @@ impl Clone for Event {
 pub async fn run(core_ids: Vec<core_affinity::CoreId>) -> anyhow::Result<()> {
     let (collect_tx, collect_rx) = tokio::sync::mpsc::channel::<Event>(20480);
     let mut collect_rx = tokio_stream::wrappers::ReceiverStream::new(collect_rx);
-    // let (collect_tx, collect_rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    // let mut collect_rx = tokio_stream::wrappers::UnboundedReceiverStream::new(collect_rx);
     crate::DISPATCHER.set(collect_tx).unwrap();
 
-    // let (group_sender, group_recver) = flume::unbounded();
     // save every event_loop
     let mut event_loops = vec![];
     let mut conhash = conhash::ConsistentHash::new();
