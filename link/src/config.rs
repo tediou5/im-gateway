@@ -32,6 +32,7 @@ pub(crate) struct Http {
 #[derive(serde_derive::Deserialize, Debug, Clone)]
 pub(crate) struct Redis {
     pub(crate) addrs: String,
+    pub(crate) heartbeat_interval: usize,
 }
 
 #[derive(serde_derive::Deserialize, Debug, Clone)]

@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
     AUTH_URL.set(config.tcp.auth).unwrap();
     HTTP_CLIENT.set(client).unwrap();
 
-    let redis_client = redis::Client::new(local_addr.to_string(), config.redis.addrs).await?;
+    let redis_client = redis::Client::new(local_addr.to_string(), config.redis).await?;
     REDIS_CLIENT.set(redis_client).unwrap();
     tracing::error!("starting redis client");
 
