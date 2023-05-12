@@ -19,7 +19,6 @@ pub(crate) enum Event {
     Group(
         String,                            /* chat */
         std::collections::HashSet<String>, /* exclusions */
-        std::collections::HashSet<String>, /* additional */
         #[serde(with = "hex")] Vec<u8>,
     ),
     Chat(chat::Action),
@@ -30,9 +29,7 @@ impl Clone for Event {
         match self {
             Self::Login(..) => panic!("you cannot clone Event::Login"),
             Self::Private(arg0, arg1) => Self::Private(arg0.clone(), arg1.clone()),
-            Self::Group(arg0, arg1, arg2, arg3) => {
-                Self::Group(arg0.clone(), arg1.clone(), arg2.clone(), arg3.clone())
-            }
+            Self::Group(arg0, arg1, arg2) => Self::Group(arg0.clone(), arg1.clone(), arg2.clone()),
             Self::Chat(arg0) => Self::Chat(arg0.clone()),
         }
     }
@@ -93,7 +90,7 @@ async fn dispatch(
                 };
             }
         }
-        Event::Group(chat, exclusions, additional, message) => {
+        Event::Group(chat, exclusions, message) => {
             let message = std::sync::Arc::new(message);
             for event_loop in event_loops {
                 if let Err(e) = event_loop
@@ -101,7 +98,7 @@ async fn dispatch(
                     .send(event_loop::Event::Group(
                         chat.clone(),
                         exclusions.clone(),
-                        additional.clone(),
+                        // additional.clone(),
                         message.clone(),
                     ))
                     .await
@@ -125,4 +122,3 @@ async fn dispatch(
 
     Ok(())
 }
-// }

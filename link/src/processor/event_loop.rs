@@ -8,7 +8,6 @@ pub(super) enum Event {
     Group(
         String,                            /* chat */
         std::collections::HashSet<String>, /* exclusions */
-        std::collections::HashSet<String>, /* additional */
         std::sync::Arc<Vec<u8>>,
     ),
     Chat(super::chat::Action),
@@ -29,9 +28,6 @@ impl crate::conhash::Node for EventLoop {
 pub(super) fn run(core_id: core_affinity::CoreId) -> EventLoop {
     let (collect_tx, collect_rx) = tokio::sync::mpsc::channel::<Event>(2048);
     let mut collect_rx = tokio_stream::wrappers::ReceiverStream::new(collect_rx);
-    // let (collect_tx, collect_rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    // let mut collect_rx = tokio_stream::wrappers::UnboundedReceiverStream::new(collect_rx);
-    // crate::EVENT_LOOP.set(collect_tx).unwrap();
 
     let id = core_id.id;
 
@@ -114,9 +110,8 @@ async fn process(
         }
         Event::Private(pin, message) => {
             let mut content = None;
-            let message = std::sync::Arc::new(message);
+            let message = std::rc::Rc::new(message.as_ref().clone());
 
-            // for pin in pins.iter() {
             if let Some(sender) = users.get_mut(&pin) {
                 tracing::trace!("send user: {pin}");
                 if sender.send(&message, &mut content).is_err() {
@@ -124,35 +119,29 @@ async fn process(
                     users.remove(&pin);
                 };
             }
-            // }
         }
-        Event::Group(chat, exclusions, additional, message) => {
+        Event::Group(chat, exclusions, message) => {
             if let Some(online) = chats.get_mut(&chat) {
-                // TODO: FIXME:
-                // let mut recv_list: std::collections::HashSet<&str> =
-                //     online.iter().map(|one| one.as_str()).collect();
-                // let exclusions = &exclusions.iter().map(|exc| exc.as_str()).collect();
-                // additional
-                //     .iter()
-                //     .map(|add| add.as_str())
-                //     .collect_into(&mut recv_list);
+                let exclusions: std::collections::HashSet<_> = exclusions
+                    .iter()
+                    .filter_map(|exc| users.get(exc).cloned())
+                    .collect();
 
-                // let recv_list: std::collections::HashSet<&&str> =
-                //     recv_list.difference(exclusions).collect();
+                let recv_list: std::collections::HashSet<crate::linker::User> =
+                    online.difference(&exclusions).map(Clone::clone).collect();
 
                 let mut content = None;
-                let message = std::sync::Arc::new(message);
+                let message = std::rc::Rc::new(message.as_ref().clone());
 
                 tracing::trace!("send group [{}] message", online.len());
 
-                online.retain(|one| {
-                    one.send(&message, &mut content)
-                        .inspect_err(|_e| {
-                            users.remove(one.pin.as_ref());
-                            one.close()
-                        })
-                        .is_ok()
-                });
+                for one in recv_list.iter() {
+                    if one.send(&message, &mut content).is_err() {
+                        users.remove(one.pin.as_ref());
+                        online.remove(one);
+                        one.close()
+                    }
+                }
             };
         }
         Event::Chat(crate::processor::chat::Action::Leave(chat, members)) => {
@@ -184,7 +173,7 @@ async fn process(
             if let Some(online) = chats.get_mut(&chat.to_string()) {
                 tracing::trace!("[{chat}] with online members: {online:?}");
                 let mut content = None;
-                let message = std::sync::Arc::new(message);
+                let message = std::rc::Rc::new(message);
 
                 tracing::trace!("send group [{}] message", online.len());
 
@@ -243,11 +232,10 @@ mod test {
     #[test]
     fn from_kafaka_record_group_to_event() {
         let record_group =
-            serde_json::to_string(&serde_json::json!(["cc_1", [], [], HEX_STRING])).unwrap();
+            serde_json::to_string(&serde_json::json!(["cc_1", [], HEX_STRING])).unwrap();
 
         let group = Event::Group(
             "cc_1".to_string(),
-            HashSet::new(),
             HashSet::new(),
             hex::decode(HEX_STRING).unwrap(),
         );
@@ -258,20 +246,11 @@ mod test {
 
     #[test]
     fn join() {
-        let uu1 = Rc::new("uu1".to_string());
         let uu2 = Rc::new("uu2".to_string());
         let uu3 = Rc::new("uu3".to_string());
-        let uu4 = Rc::new("uu4".to_string());
-        let uu5 = Rc::new("uu5".to_string());
         let uu6 = Rc::new("uu6".to_string());
 
-        let mut users = ahash::AHashMap::from([
-            (uu1.clone(), User::from_pin(uu1.clone())),
-            (uu2.clone(), User::from_pin(uu2.clone())),
-            (uu3.clone(), User::from_pin(uu3.clone())),
-            (uu4.clone(), User::from_pin(uu4.clone())),
-            (uu5.clone(), User::from_pin(uu5.clone())),
-        ]);
+        let mut users = new_user();
 
         let mut chat = std::collections::HashSet::new();
         chat.insert(User::from_pin(uu6.clone()));
@@ -291,5 +270,21 @@ mod test {
         ]);
 
         assert_eq!(chat, new_chat);
+    }
+
+    fn new_user() -> ahash::AHashMap<Rc<String>, User> {
+        let uu1 = Rc::new("uu1".to_string());
+        let uu2 = Rc::new("uu2".to_string());
+        let uu3 = Rc::new("uu3".to_string());
+        let uu4 = Rc::new("uu4".to_string());
+        let uu5 = Rc::new("uu5".to_string());
+
+        ahash::AHashMap::from([
+            (uu1.clone(), User::from_pin(uu1.clone())),
+            (uu2.clone(), User::from_pin(uu2.clone())),
+            (uu3.clone(), User::from_pin(uu3.clone())),
+            (uu4.clone(), User::from_pin(uu4.clone())),
+            (uu5.clone(), User::from_pin(uu5.clone())),
+        ])
     }
 }

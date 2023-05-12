@@ -4,7 +4,8 @@ pub(crate) type Sender = tokio::sync::mpsc::UnboundedSender<Event>;
 
 #[derive(Debug)]
 pub(crate) enum Event {
-    WriteBatch(std::sync::Arc<String>),
+    WriteBatch(std::rc::Rc<String>),
+    // WriteBatch(std::sync::Arc<String>),
     Close,
 }
 

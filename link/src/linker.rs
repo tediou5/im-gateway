@@ -88,8 +88,10 @@ impl User {
 
     pub(crate) fn send(
         &self,
-        message_bytes: &std::sync::Arc<Vec<u8>>,
-        content: &mut Option<std::sync::Arc<String>>,
+        message_bytes: &std::rc::Rc<Vec<u8>>,
+        content: &mut Option<std::rc::Rc<String>>,
+        // message_bytes: &std::sync::Arc<Vec<u8>>,
+        // content: &mut Option<std::sync::Arc<String>>,
     ) -> anyhow::Result<()> {
         let mut flag = 0;
 
@@ -112,7 +114,8 @@ impl User {
         let mut web = self.web.borrow_mut();
         if let Some(sender) = web.as_ref().inspect(|_| flag += 1) {
             if content.is_none() {
-                *content = Some(std::sync::Arc::new(
+                *content = Some(std::rc::Rc::new(
+                    // *content = Some(std::sync::Arc::new(
                     String::from_utf8_lossy(&message_bytes.as_ref()[44..]).to_string(),
                 ))
             }
