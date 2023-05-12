@@ -63,21 +63,21 @@ impl User {
     pub(crate) fn update(&self, platform: Platform) {
         match platform {
             Platform::App(stream) => {
-                let sender = tcp::process(stream);
+                let sender = tcp::process(stream, self.pin.clone());
                 if let Some(old) = self.app.replace(Some(sender)) {
                     tracing::error!("{}: remove old > app < connection", self.pin.as_str());
                     let _ = old.send(tcp::Event::Close);
                 };
             }
             Platform::Pc(stream) => {
-                let sender = tcp::process(stream);
+                let sender = tcp::process(stream, self.pin.clone());
                 if let Some(old) = self.pc.replace(Some(sender)) {
                     tracing::error!("{}: remove old > pc < connection", self.pin.as_str());
                     let _ = old.send(tcp::Event::Close);
                 };
             }
             Platform::Web(socket) => {
-                let sender = websocket::process(socket);
+                let sender = websocket::process(socket, self.pin.clone());
                 if let Some(old) = self.web.replace(Some(sender)) {
                     tracing::error!("{}: remove old > web < connection", self.pin.as_str());
                     let _ = old.send(websocket::Event::Close);

@@ -40,10 +40,10 @@ pub(crate) async fn websocket(
     })
 }
 
-pub(crate) fn process(socket: axum::extract::ws::WebSocket) -> Sender {
+pub(crate) fn process(socket: axum::extract::ws::WebSocket, pin: std::rc::Rc<String>) -> Sender {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     let mut rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
-    let mut write = handle(socket, tx.clone());
+    let mut write = handle(socket, tx.clone(), pin);
 
     tokio::task::spawn_local(async move {
         use futures::SinkExt as _;
@@ -80,6 +80,7 @@ pub(crate) fn process(socket: axum::extract::ws::WebSocket) -> Sender {
 fn handle(
     socket: axum::extract::ws::WebSocket,
     tx: Sender,
+    pin: std::rc::Rc<String>,
 ) -> futures::stream::SplitSink<axum::extract::ws::WebSocket, axum::extract::ws::Message> {
     use futures::StreamExt as _;
 
@@ -87,9 +88,18 @@ fn handle(
 
     tokio::task::spawn_local(async move {
         while let Some(Ok(message)) = input.next().await {
+            let pin = pin.clone();
             match message {
                 axum::extract::ws::Message::Text(message) => {
                     tracing::trace!("[websocket] received message: {message:?}");
+
+                    tokio::task::spawn_local(async move {
+                        if let Some(redis) = crate::REDIS_CLIENT.get() {
+                            if let Err(e) = redis.heartbeat(pin.to_string()).await {
+                                tracing::error!("update [{pin}] heartbeat error: {}", e)
+                            };
+                        }
+                    });
 
                     if let Ok(content) = serde_json::from_str::<Content>(message.as_str()) {
                         let kafka = crate::KAFKA_CLIENT

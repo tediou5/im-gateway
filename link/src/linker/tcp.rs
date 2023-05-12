@@ -45,14 +45,14 @@ pub(crate) async fn auth(mut stream: tokio::net::TcpStream) -> anyhow::Result<()
         .await
 }
 
-pub(crate) fn process(stream: tokio::net::TcpStream) -> Sender {
+pub(crate) fn process(stream: tokio::net::TcpStream, pin: std::rc::Rc<String>) -> Sender {
     tracing::trace!("ready to process tcp message: {:?}", stream.peer_addr());
     // Use an unbounded channel to handle buffering and flushing of messages
     // to the event source...
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     let mut rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
 
-    let mut write = handle(stream, tx.clone());
+    let mut write = handle(stream, tx.clone(), pin);
 
     tokio::task::spawn_local(async move {
         use tokio_stream::StreamExt as _;
@@ -94,12 +94,17 @@ pub(crate) fn process(stream: tokio::net::TcpStream) -> Sender {
 }
 
 /// handle spawn a new thread, read the request through the tcpStream, then send response to channel tx
-fn handle(stream: tokio::net::TcpStream, tx: Sender) -> tokio::net::tcp::OwnedWriteHalf {
+fn handle(
+    stream: tokio::net::TcpStream,
+    tx: Sender,
+    pin: std::rc::Rc<String>,
+) -> tokio::net::tcp::OwnedWriteHalf {
     tracing::trace!("ready to handle tcp request: {:?}", stream.peer_addr());
     let (read, write) = stream.into_split();
     tokio::task::spawn_local(async move {
         let mut req = [0; 4096];
         loop {
+            let pin = pin.clone();
             // Wait for the socket to be readable
             tracing::trace!("tcp waiting for read request");
             if (read.readable()).await.is_err() {
@@ -114,6 +119,15 @@ fn handle(stream: tokio::net::TcpStream, tx: Sender) -> tokio::net::tcp::OwnedWr
                         let _ = tx.send(Event::Close);
                         break;
                     }
+
+                    tokio::task::spawn_local(async move {
+                        if let Some(redis) = crate::REDIS_CLIENT.get() {
+                            if let Err(e) = redis.heartbeat(pin.to_string()).await {
+                                tracing::error!("update [{pin}] heartbeat error: {}", e)
+                            };
+                        }
+                    });
+
                     tracing::trace!("tcp read message");
                     let kafka = crate::KAFKA_CLIENT
                         .get()

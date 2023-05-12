@@ -58,7 +58,7 @@ impl Client {
         // .duration_since(std::time::SystemTime::UNIX_EPOCH)
         // .unwrap()
         // .as_secs();
-        let _: () = self.inner.set(pin, (), Some(Expiration::EX(self.heartbeat_interval as i64)), None, false).await?;
+        self.inner.set(pin, (), Some(Expiration::EX(self.heartbeat_interval as i64)), None, false).await?;
 
         Ok(())
     }
