@@ -42,7 +42,7 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    tracing::error!("version: 2023/5/11-09:58");
+    tracing::error!("version: 2023/5/12-14:13");
 
     let local_addr = socket_addr::ipv4::local_addr().await?;
     tracing::error!("local addr: {local_addr:?}");
@@ -60,21 +60,26 @@ async fn main() -> anyhow::Result<()> {
     REDIS_CLIENT.set(redis_client).unwrap();
     tracing::error!("starting redis client");
 
-    let kafka_client =
-        kafka::Client::new(local_addr.to_string().as_str(), config.kafka.clone()).await?;
-    KAFKA_CLIENT.set(kafka_client.clone()).unwrap();
-
-    let client = kafka_client;
-    tracing::error!("starting kafka client");
-
+    let mut core_ids = core_affinity::get_core_ids().unwrap();
+    let main_core_id = core_ids.pop();
+    if let Some(core_id) = main_core_id {
+        if core_affinity::set_for_current(core_id) {
+            tracing::error!("setting main core [{}]", core_id.id);
+        }
+    };
     tokio::task::LocalSet::new()
         .run_until(async {
             // TODO: init & run raft
 
-            let worker_number = num_cpus::get() - 1;
+            let kafka_client =
+            kafka::Client::new(local_addr.to_string().as_str(), config.kafka.clone()).await.unwrap();
+            KAFKA_CLIENT.set(kafka_client.clone()).unwrap();
+
+            let client = kafka_client;
+            tracing::error!("starting kafka client");    
 
             tokio::task::spawn_local(async move {
-                processor::run(worker_number).await.unwrap();
+                processor::run(core_ids).await.unwrap();
             });
 
             tokio::task::spawn_local(async {
@@ -105,15 +110,20 @@ async fn main() -> anyhow::Result<()> {
             });
 
             tracing::error!("handle tcp connect");
-            while let Ok((stream, _)) = tcp_listener.accept().await {
-                // FIXME:
+            while let Ok((stream, remote_addr)) = tcp_listener.accept().await {
                 // stream.set_nodelay(true)?;
                 tokio::task::spawn_local(async move {
                     // use std::sync::atomic::Ordering::Relaxed;
 
+                    tracing::trace!("{remote_addr} connected");
                     // Process each socket concurrently.
                     // axum_handler::LINK_COUNT.fetch_add(1, Relaxed);
-                    linker::tcp::auth(stream).await?;
+                    if let Err(e) = linker::tcp::auth(stream).await{
+                        tracing::error!("tcp auth error: {e:?}");
+                    } else {
+                        tracing::trace!("{remote_addr} authed");
+                    };
+
                     // axum_handler::LINK_COUNT.fetch_sub(1, Relaxed);
                     Ok::<(), anyhow::Error>(())
                 });

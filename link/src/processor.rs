@@ -38,62 +38,44 @@ impl Clone for Event {
     }
 }
 
-// pub(crate) struct Dispatcher {
-//     conhash: crate::conhash::ConsistentHash<event_loop::EventLoop>,
-//     group_sender: flume::Sender<event_loop::Group>,
-// }
-
-// impl Dispatcher {
-// pub(crate) async fn new(worker_number: usize) -> Self {
-//     let (group_sender, group_recver) = flume::unbounded();
-
-//     let mut conhash = conhash::ConsistentHash::new();
-//     for id in 0..(worker_number) {
-//         tracing::error!("running event loop");
-//         conhash.add(&event_loop::run(id, group_recver.clone()), 3);
-//     }
-
-//     Self {
-//         conhash,
-//         // matedata,
-//         group_sender,
-//     }
-// }
-
-pub async fn run(worker_number: usize) -> anyhow::Result<()> {
+pub async fn run(core_ids: Vec<core_affinity::CoreId>) -> anyhow::Result<()> {
     let (collect_tx, collect_rx) = tokio::sync::mpsc::channel::<Event>(20480);
     let mut collect_rx = tokio_stream::wrappers::ReceiverStream::new(collect_rx);
     // let (collect_tx, collect_rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     // let mut collect_rx = tokio_stream::wrappers::UnboundedReceiverStream::new(collect_rx);
     crate::DISPATCHER.set(collect_tx).unwrap();
 
-    let (group_sender, group_recver) = flume::unbounded();
-
+    // let (group_sender, group_recver) = flume::unbounded();
+    // save every event_loop
+    let mut event_loops = vec![];
     let mut conhash = conhash::ConsistentHash::new();
-    for id in 0..(worker_number) {
-        tracing::error!("running event loop");
-        conhash.add(&event_loop::run(id, group_recver.clone()), 3);
+    for id in core_ids.into_iter() {
+        let event_loop: event_loop::EventLoop = event_loop::run(id);
+        conhash.add(&event_loop, 3);
+        event_loops.push(event_loop);
     }
 
     use tokio_stream::StreamExt as _;
 
     while let Some(event) = collect_rx.next().await {
-        dispatch(&conhash, &group_sender, event).await?;
+        dispatch(&conhash, &event_loops, event).await?;
     }
     Ok(())
 }
 
 async fn dispatch(
     conhash: &crate::conhash::ConsistentHash<event_loop::EventLoop>,
-    group_sender: &flume::Sender<event_loop::Group>,
+    event_loops: &Vec<event_loop::EventLoop>,
     event: Event,
 ) -> anyhow::Result<()> {
     match event {
         Event::Login(pin, chats, platform) => {
             if let Some(node) = conhash.get(pin.as_bytes()) {
+                use crate::conhash::Node as _;
+                tracing::error!("[{pin}]login in {} node.", node.name());
                 if let Err(e) = node
                     .mailbox
-                    .send(event_loop::Private::Login(pin, chats, platform))
+                    .send(event_loop::Event::Login(pin, chats, platform))
                     .await
                 {
                     return Err(anyhow::anyhow!("Dispatcher Event::Login Error: {e}"));
@@ -106,7 +88,7 @@ async fn dispatch(
                 if let Some(node) = conhash.get(pin.as_bytes()) {
                     if let Err(e) = node
                         .mailbox
-                        .send(event_loop::Private::Message(pin, message.clone()))
+                        .send(event_loop::Event::Private(pin, message.clone()))
                         .await
                     {
                         return Err(anyhow::anyhow!("Dispatcher Event::Private Error: {e}"));
@@ -116,22 +98,31 @@ async fn dispatch(
         }
         Event::Group(chat, exclusions, additional, message) => {
             let message = std::sync::Arc::new(message);
-            if let Err(e) = group_sender
-                .send_async(event_loop::Group::Message(
-                    chat, exclusions, additional, message,
-                ))
-                .await
-            {
-                return Err(anyhow::anyhow!("Dispatcher Event::Group Error: {e}"));
-            };
+            for event_loop in event_loops {
+                if let Err(e) = event_loop
+                    .mailbox
+                    .send(event_loop::Event::Group(
+                        chat.clone(),
+                        exclusions.clone(),
+                        additional.clone(),
+                        message.clone(),
+                    ))
+                    .await
+                {
+                    return Err(anyhow::anyhow!("Dispatcher Event::Group Error: {e}"));
+                };
+            }
         }
         Event::Chat(action) => {
-            if let Err(e) = group_sender
-                .send_async(event_loop::Group::Chat(action))
-                .await
-            {
-                return Err(anyhow::anyhow!("Dispatcher Event::Group Error: {e}"));
-            };
+            for event_loop in event_loops {
+                if let Err(e) = event_loop
+                    .mailbox
+                    .send(event_loop::Event::Chat(action.clone()))
+                    .await
+                {
+                    return Err(anyhow::anyhow!("Dispatcher Event::Group Error: {e}"));
+                };
+            }
         }
     }
 

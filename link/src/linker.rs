@@ -96,6 +96,7 @@ impl User {
         let mut app = self.app.borrow_mut();
         if let Some(sender) = app.as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(tcp::Event::WriteBatch(message_bytes.clone())) {
+            tracing::error!("{}: tcp send failed", self.pin);
             app.take();
             flag -= 1;
         };
@@ -103,6 +104,7 @@ impl User {
         let mut pc = self.pc.borrow_mut();
         if let Some(sender) = pc.as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(tcp::Event::WriteBatch(message_bytes.clone())) {
+            tracing::error!("{}: tcp send failed", self.pin);
             pc.take();
             flag -= 1;
         };
@@ -117,6 +119,7 @@ impl User {
 
             if let Some(content) = content &&
             let Err(_) = sender.send(websocket::Event::WriteBatch(content.clone())) {
+                tracing::error!("{}: websocket send failed", self.pin);
                 web.take();
                 flag -= 1;
             }

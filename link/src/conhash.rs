@@ -17,7 +17,6 @@ fn default_md5_hash_fn(input: &[u8]) -> Vec<u8> {
 }
 
 /// Consistent Hash
-#[allow(dead_code)]
 pub struct ConsistentHash<N: Node> {
     hash_fn: fn(&[u8]) -> Vec<u8>,
     nodes: std::collections::BTreeMap<Vec<u8>, N>,
@@ -77,17 +76,20 @@ impl<N: Node> ConsistentHash<N> {
         Some(v)
     }
 
+    #[allow(dead_code)]
     /// Get a node by string key
     pub fn get_str<'a>(&'a self, key: &str) -> Option<&'a N> {
         self.get(key.as_bytes())
     }
 
+    #[allow(dead_code)]
     /// Get a node by key. Return `None` if no valid node inside
     pub fn get_mut<'a>(&'a mut self, key: &[u8]) -> Option<&'a mut N> {
         let hashed_key = self.get_node_hashed_key(key);
         hashed_key.and_then(move |k| self.nodes.get_mut(&k))
     }
 
+    #[allow(dead_code)]
     // Get a node's hashed key by key. Return `None` if no valid node inside
     fn get_node_hashed_key(&self, key: &[u8]) -> Option<Vec<u8>> {
         if self.nodes.is_empty() {
@@ -108,6 +110,7 @@ impl<N: Node> ConsistentHash<N> {
         Some(k.clone())
     }
 
+    #[allow(dead_code)]
     /// Get a node by string key
     pub fn get_str_mut<'a>(&'a mut self, key: &str) -> Option<&'a mut N> {
         self.get_mut(key.as_bytes())
@@ -131,11 +134,13 @@ impl<N: Node> ConsistentHash<N> {
         }
     }
 
+    #[allow(dead_code)]
     /// Number of nodes
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
 
+    #[allow(dead_code)]
     /// Is empty
     pub fn is_empty(&self) -> bool {
         self.len() == 0

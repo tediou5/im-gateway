@@ -1,14 +1,11 @@
-pub(super) enum Private {
+pub(super) enum Event {
     Login(
         String,                      /* pin */
         Vec<std::sync::Arc<String>>, /* chats */
         crate::linker::Platform,
     ),
-    Message(String /* recvs */, std::sync::Arc<Vec<u8>>),
-}
-
-pub(super) enum Group {
-    Message(
+    Private(String /* recv */, std::sync::Arc<Vec<u8>>),
+    Group(
         String,                            /* chat */
         std::collections::HashSet<String>, /* exclusions */
         std::collections::HashSet<String>, /* additional */
@@ -20,7 +17,7 @@ pub(super) enum Group {
 #[derive(Clone)]
 pub(super) struct EventLoop {
     name: std::rc::Rc<String>,
-    pub(super) mailbox: tokio::sync::mpsc::Sender<Private>,
+    pub(super) mailbox: tokio::sync::mpsc::Sender<Event>,
 }
 
 impl crate::conhash::Node for EventLoop {
@@ -29,70 +26,72 @@ impl crate::conhash::Node for EventLoop {
     }
 }
 
-pub(super) fn run(worker_number: usize, group_recver: flume::Receiver<Group>) -> EventLoop {
-    let (collect_tx, collect_rx) = tokio::sync::mpsc::channel::<Private>(2048);
+pub(super) fn run(
+    core_id: core_affinity::CoreId,
+    // group_recver: flume::Receiver<Group>,
+) -> EventLoop {
+    let (collect_tx, collect_rx) = tokio::sync::mpsc::channel::<Event>(2048);
     let mut collect_rx = tokio_stream::wrappers::ReceiverStream::new(collect_rx);
     // let (collect_tx, collect_rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     // let mut collect_rx = tokio_stream::wrappers::UnboundedReceiverStream::new(collect_rx);
     // crate::EVENT_LOOP.set(collect_tx).unwrap();
+
+    let id = core_id.id;
 
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
+        let res = core_affinity::set_for_current(core_id);
+        if res {
+            tracing::error!(
+                "running event loop: >>> processor-event-loop-{id} set for core id: [{id}] <<<"
+            );
+        } else {
+            tracing::error!("error for pin current cpu");
+        }
 
         let local = tokio::task::LocalSet::new();
         let local_set = local.run_until(async {
             tokio::task::spawn_local(async move {
-                tracing::error!("running event loop: >>> processor-event-loop-{worker_number} <<<");
                 use tokio_stream::StreamExt as _;
 
                 let mut users: ahash::AHashMap<std::rc::Rc<String>, crate::linker::User> =
                     ahash::AHashMap::new();
                 let mut chats: ahash::AHashMap<
-                    std::sync::Arc<String>,
+                    String,
                     std::collections::HashSet<crate::linker::User>,
                 > = ahash::AHashMap::new();
 
-                loop {
-                    tokio::select! {
-                        Some(private) = collect_rx.next() => {
-                            // TODO: handle private event
-                            if let Err(_e) = process_private(&mut users, &mut chats, private).await {
-                                // TODO: handle error
-                            };
-                        },
-                        Ok(group) = group_recver.recv_async() => {
-                            // TODO: handle group event
-                            if let Err(_e) = process_group(&mut users, &mut chats, group).await {
-                                // TODO: handle error
-                            };
-                        },
+                while let Some(event) = collect_rx.next().await {
+                    if let Err(e) = process(&mut users, &mut chats, event).await {
+                        // TODO: handle error
+                        tracing::error!("preocess event error: {e}");
                     };
                 }
-            });
+            })
+            .await
+            .unwrap();
         });
 
         rt.block_on(local_set);
+        tracing::error!("processor-event-loop-{id} has been cancelled");
     });
 
     EventLoop {
-        name: format!("processor-event-loop-{worker_number}").into(),
+        name: format!("processor-event-loop-{id}").into(),
         mailbox: collect_tx,
     }
 }
 
-async fn process_private(
+async fn process(
     users: &mut ahash::AHashMap<std::rc::Rc<String>, crate::linker::User>,
-    chats: &mut ahash::AHashMap<
-        std::sync::Arc<String>,
-        std::collections::HashSet<crate::linker::User>,
-    >,
-    event: Private,
+    chats: &mut ahash::AHashMap<String, std::collections::HashSet<crate::linker::User>>,
+    event: Event,
 ) -> anyhow::Result<()> {
     match event {
-        Private::Login(user, chat_list, platform) => {
+        Event::Login(user, chat_list, platform) => {
             tracing::error!("{user} login");
             let user = std::rc::Rc::new(user);
             let user_connection = users
@@ -104,8 +103,7 @@ async fn process_private(
             let mut regiest_chats = Vec::new();
 
             for chat in chat_list {
-                // FIXME: maybe have a better way to do this
-                let member = chats.entry(chat).or_insert_with_key(|chat| {
+                let member = chats.entry(chat.to_string()).or_insert_with_key(|chat| {
                     regiest_chats.push(chat.to_string());
                     Default::default()
                 });
@@ -117,33 +115,21 @@ async fn process_private(
                 Ok::<(), anyhow::Error>(())
             });
         }
-        Private::Message(pin, message) => {
+        Event::Private(pin, message) => {
             let mut content = None;
             let message = std::sync::Arc::new(message);
 
+            // for pin in pins.iter() {
             if let Some(sender) = users.get_mut(&pin) {
                 tracing::trace!("send user: {pin}");
                 if sender.send(&message, &mut content).is_err() {
-                    tracing::debug!("remove user: {pin}");
+                    tracing::trace!("remove user: {pin}");
                     users.remove(&pin);
                 };
             }
+            // }
         }
-    }
-
-    Ok(())
-}
-
-async fn process_group(
-    users: &mut ahash::AHashMap<std::rc::Rc<String>, crate::linker::User>,
-    chats: &mut ahash::AHashMap<
-        std::sync::Arc<String>,
-        std::collections::HashSet<crate::linker::User>,
-    >,
-    event: Group,
-) -> anyhow::Result<()> {
-    match event {
-        Group::Message(chat, exclusions, additional, message) => {
+        Event::Group(chat, exclusions, additional, message) => {
             if let Some(online) = chats.get_mut(&chat) {
                 // TODO: FIXME:
                 // let mut recv_list: std::collections::HashSet<&str> =
@@ -170,26 +156,23 @@ async fn process_group(
                         })
                         .is_ok()
                 });
-            } else {
-                tracing::error!("no such chat: {chat}");
-            }
+            };
         }
-        Group::Chat(crate::processor::chat::Action::Leave(chat, members)) => {
-            if let Some(online) = chats.get_mut(&chat) {
+        Event::Chat(crate::processor::chat::Action::Leave(chat, members)) => {
+            if let Some(online) = chats.get_mut(&chat.to_string()) {
                 for member in members {
                     let user = crate::linker::User::from_pin(member.into());
                     online.remove(&user);
                 }
             }
         }
-        Group::Chat(crate::processor::chat::Action::Join(chat, members)) => {
-            tracing::debug!("join [{chat}]");
+        Event::Chat(crate::processor::chat::Action::Join(chat, members)) => {
             let members = _join(users, members);
+            tracing::trace!("add {members:?} into [{chat}]");
             if !members.is_empty() {
-                let online = chats.entry(chat.clone()).or_default();
+                let online = chats.entry(chat.to_string()).or_default();
                 if online.is_empty() {
                     if let Some(redis_client) = crate::REDIS_CLIENT.get() {
-                        tracing::debug!("add [{chat}] into router");
                         redis_client
                             .regist(vec![chat.to_string()])
                             .await
@@ -199,7 +182,25 @@ async fn process_group(
                 members.into_iter().collect_into(online);
             }
         }
-        Group::Chat(super::chat::Action::Notice(_, _)) => todo!(),
+        Event::Chat(super::chat::Action::Notice(chat, message)) => {
+            tracing::trace!("send notice to [{chat}]");
+            if let Some(online) = chats.get_mut(&chat.to_string()) {
+                tracing::trace!("[{chat}] with online members: {online:?}");
+                let mut content = None;
+                let message = std::sync::Arc::new(message);
+
+                tracing::trace!("send group [{}] message", online.len());
+
+                online.retain(|one| {
+                    one.send(&message, &mut content)
+                        .inspect_err(|_e| {
+                            users.remove(one.pin.as_ref());
+                            one.close()
+                        })
+                        .is_ok()
+                });
+            };
+        }
     }
 
     Ok(())

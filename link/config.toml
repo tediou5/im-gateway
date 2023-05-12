@@ -1,6 +1,6 @@
 [tcp]
 port = 10001
-auth = "http://192.168.0.92:10804/v1/rest/merchant/user/parseToken"
+auth = "http://192.168.0.231:10804/v1/rest/merchant/user/parseToken"
 
 [http]
 port = 4855

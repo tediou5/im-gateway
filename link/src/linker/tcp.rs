@@ -8,6 +8,8 @@ pub(crate) enum Event {
 
 // auth tcp then handle it.
 pub(crate) async fn auth(mut stream: tokio::net::TcpStream) -> anyhow::Result<()> {
+    crate::axum_handler::LINK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut req = [0; 4096];
 
@@ -22,6 +24,8 @@ pub(crate) async fn auth(mut stream: tokio::net::TcpStream) -> anyhow::Result<()
             return Err(anyhow::anyhow!("failed to read from socket; err = {e}"));
         }
     };
+
+    tracing::trace!("recv auth request from tcp: {auth:?}");
 
     TryInto::<crate::linker::Message>::try_into(auth)?
         .content
@@ -41,6 +45,7 @@ pub(crate) async fn auth(mut stream: tokio::net::TcpStream) -> anyhow::Result<()
 }
 
 pub(crate) fn process(stream: tokio::net::TcpStream) -> Sender {
+    tracing::trace!("ready to process tcp message: {:?}", stream.peer_addr());
     // Use an unbounded channel to handle buffering and flushing of messages
     // to the event source...
     // let (tx, rx) = tokio::sync::mpsc::channel::<TcpEvent>(10240);
@@ -53,17 +58,23 @@ pub(crate) fn process(stream: tokio::net::TcpStream) -> Sender {
     tokio::task::spawn_local(async move {
         use tokio_stream::StreamExt as _;
 
-        while let Some(event) = rx.next().await &&
-        let Event::WriteBatch(message) = event {
+        while let Some(event) = rx.next().await {
+            let message = match event {
+                Event::WriteBatch(message) => message,
+                Event::Close => break,
+            };
+
+            tracing::trace!("tcp waiting for write message");
+
             if (write.writable().await).is_err() {
                 break;
             };
-
+            tracing::trace!("tcp try to write");
             match write.try_write(message.as_slice()) {
                 Ok(_) => {
+                    tracing::trace!("tcp write message");
                     crate::axum_handler::LINK_SEND_COUNT
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    continue;
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     continue;
@@ -73,9 +84,11 @@ pub(crate) fn process(stream: tokio::net::TcpStream) -> Sender {
                 }
             }
         }
-
+        tracing::trace!("tcp closed");
         use tokio::io::AsyncWriteExt as _;
         let _ = write.shutdown().await;
+
+        crate::axum_handler::LINK_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
     });
 
     tx
@@ -83,14 +96,17 @@ pub(crate) fn process(stream: tokio::net::TcpStream) -> Sender {
 
 /// handle spawn a new thread, read the request through the tcpStream, then send response to channel tx
 fn handle(stream: tokio::net::TcpStream, tx: Sender) -> tokio::net::tcp::OwnedWriteHalf {
+    tracing::trace!("ready to handle tcp request: {:?}", stream.peer_addr());
     let (read, write) = stream.into_split();
     tokio::task::spawn_local(async move {
         let mut req = [0; 4096];
         loop {
             // Wait for the socket to be readable
+            tracing::trace!("tcp waiting for read request");
             if (read.readable()).await.is_err() {
                 break;
             }
+            tracing::trace!("tcp try to read");
             // Try to read data, this may still fail with `WouldBlock`
             // if the readiness event is a false positive.
             match read.try_read(&mut req) {
@@ -99,6 +115,7 @@ fn handle(stream: tokio::net::TcpStream, tx: Sender) -> tokio::net::tcp::OwnedWr
                         let _ = tx.send(Event::Close);
                         break;
                     }
+                    tracing::trace!("tcp read message");
                     let kafka = crate::KAFKA_CLIENT
                         .get()
                         .ok_or(anyhow::anyhow!("kafka is not available"))?;
@@ -117,5 +134,6 @@ fn handle(stream: tokio::net::TcpStream, tx: Sender) -> tokio::net::tcp::OwnedWr
         }
         Ok::<(), anyhow::Error>(())
     });
+
     write
 }

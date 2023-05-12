@@ -9,5 +9,8 @@ pub(crate) enum Action {
         std::sync::Arc<String>, /* chat */
         std::collections::HashSet<String>,
     ),
-    Notice(std::sync::Arc<String> /* chat */, String),
+    Notice(
+        std::sync::Arc<String>, /* chat */
+        #[serde(with = "hex")] Vec<u8>,
+    ),
 }

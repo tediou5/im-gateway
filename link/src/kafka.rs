@@ -174,7 +174,7 @@ impl Client {
     where
         M: Into<rskafka::record::Record> + std::fmt::Debug,
     {
-        tracing::debug!("kafka produce: {message:?}");
+        tracing::trace!("kafka produce: {message:?}");
         crate::axum_handler::KAFKA_PRODUCE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.bussiness_client.send(message.into())?;
         Ok(())
