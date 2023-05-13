@@ -31,7 +31,7 @@ pub(crate) async fn auth(mut stream: tokio::net::TcpStream) -> anyhow::Result<()
     TryInto::<crate::linker::Message>::try_into(auth)?
         .content
         .handle_auth(async move |platform, message| {
-            tracing::trace!("platform connection: {platform:?} with baseinfo:\n{message:?}");
+            tracing::info!("platform connection: {platform:?} with baseinfo:\n{message:?}");
             let message: Vec<u8> = (&message).into();
             if let Err(e) = stream.write_all(message.as_slice()).await {
                 return Err(anyhow::anyhow!("failed to write to socket; err = {e}"));
@@ -46,13 +46,16 @@ pub(crate) async fn auth(mut stream: tokio::net::TcpStream) -> anyhow::Result<()
 }
 
 pub(crate) fn process(stream: tokio::net::TcpStream, pin: std::rc::Rc<String>) -> Sender {
-    tracing::trace!("ready to process tcp message: {:?}", stream.peer_addr());
+    tracing::info!(
+        "[{pin}] ready to process tcp message: {:?}",
+        stream.peer_addr()
+    );
     // Use an unbounded channel to handle buffering and flushing of messages
     // to the event source...
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     let mut rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
 
-    let mut write = handle(stream, tx.clone(), pin);
+    let mut write = handle(stream, tx.clone(), pin.clone());
 
     tokio::task::spawn_local(async move {
         use tokio_stream::StreamExt as _;
@@ -63,15 +66,15 @@ pub(crate) fn process(stream: tokio::net::TcpStream, pin: std::rc::Rc<String>) -
                 Event::Close => break,
             };
 
-            tracing::trace!("tcp waiting for write message");
+            tracing::info!("[{pin}] tcp waiting for write message");
 
             if (write.writable().await).is_err() {
                 break;
             };
-            tracing::trace!("tcp try to write");
+            tracing::trace!("[{pin}] tcp try to write");
             match write.try_write(message.as_slice()) {
                 Ok(_) => {
-                    tracing::trace!("tcp write message");
+                    tracing::info!("[{pin}] tcp write message");
                     crate::axum_handler::LINK_SEND_COUNT
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
@@ -83,7 +86,12 @@ pub(crate) fn process(stream: tokio::net::TcpStream, pin: std::rc::Rc<String>) -
                 }
             }
         }
-        tracing::trace!("tcp closed");
+        tracing::info!("[{pin}] tcp closed");
+        if let Some(redis) = crate::REDIS_CLIENT.get() {
+            if let Err(e) = redis.del_heartbeat(pin.to_string()).await {
+                tracing::error!("del [{pin}] heartbeat error: {}", e)
+            };
+        }
         use tokio::io::AsyncWriteExt as _;
         let _ = write.shutdown().await;
 
@@ -120,15 +128,13 @@ fn handle(
                         break;
                     }
 
-                    tokio::task::spawn_local(async move {
-                        if let Some(redis) = crate::REDIS_CLIENT.get() {
-                            if let Err(e) = redis.heartbeat(pin.to_string()).await {
-                                tracing::error!("update [{pin}] heartbeat error: {}", e)
-                            };
-                        }
-                    });
+                    if let Some(redis) = crate::REDIS_CLIENT.get() {
+                        if let Err(e) = redis.heartbeat(pin.to_string()).await {
+                            tracing::error!("update [{pin}] heartbeat error: {}", e)
+                        };
+                    }
 
-                    tracing::trace!("tcp read message");
+                    tracing::info!("tcp read message");
                     let kafka = crate::KAFKA_CLIENT
                         .get()
                         .ok_or(anyhow::anyhow!("kafka is not available"))?;

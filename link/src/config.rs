@@ -32,7 +32,7 @@ pub(crate) struct Http {
 #[derive(serde_derive::Deserialize, Debug, Clone)]
 pub(crate) struct Redis {
     pub(crate) addrs: String,
-    pub(crate) heartbeat_interval: usize,
+    pub(crate) heartbeat_interval: i64,
 }
 
 #[derive(serde_derive::Deserialize, Debug, Clone)]
@@ -45,7 +45,6 @@ pub(crate) struct Kafka {
 #[derive(serde_derive::Deserialize, Debug, Clone)]
 pub(crate) struct Producer {
     pub(crate) linger: Option<u64>,
-    pub(crate) merge_number: Option<u64>,
     pub(crate) max_batch_size: usize,
     pub(crate) business_topic: String,
     pub(crate) business_partition: i32,

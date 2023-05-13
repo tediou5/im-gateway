@@ -112,12 +112,12 @@ async fn main() -> anyhow::Result<()> {
             tracing::error!("handle tcp connect");
             while let Ok((stream, remote_addr)) = tcp_listener.accept().await {
                 tokio::task::spawn_local(async move {
-                    tracing::trace!("{remote_addr} connected");
+                    tracing::info!("{remote_addr} connected");
                     // Process each socket concurrently.
                     if let Err(e) = linker::tcp::auth(stream).await {
                         tracing::error!("tcp auth error: {e:?}");
                     } else {
-                        tracing::trace!("{remote_addr} authed");
+                        tracing::info!("{remote_addr} authed");
                     };
 
                     Ok::<(), anyhow::Error>(())

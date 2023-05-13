@@ -3,7 +3,7 @@ use fred::{pool::RedisPool, prelude::*};
 pub(crate) struct Client {
     local_address: String,
     inner: fred::pool::RedisPool,
-    heartbeat_interval: usize,
+    heartbeat_interval: i64,
 }
 
 impl std::fmt::Debug for Client {
@@ -15,12 +15,22 @@ impl std::fmt::Debug for Client {
 }
 
 impl Client {
+    const ROUTER_KEY: &str = "router";
     const LINKERS_KEY: &str = "linkers";
+    const HEARTBEAT_KEY: &str = "heartbeat";
 
-    pub(crate) async fn new(local_address: String, config: crate::config::Redis) -> anyhow::Result<Self> {
+    pub(crate) async fn new(
+        local_address: String,
+        config: crate::config::Redis,
+    ) -> anyhow::Result<Self> {
         let perf = PerformanceConfig::default();
         let policy = ReconnectPolicy::default();
-        let pool = RedisPool::new(RedisConfig::from_url(config.addrs.as_str())?, Some(perf), Some(policy), 100)?;
+        let pool = RedisPool::new(
+            RedisConfig::from_url(config.addrs.as_str())?,
+            Some(perf),
+            Some(policy),
+            100,
+        )?;
         // let client = RedisClient::new(config, Some(perf), Some(policy));
 
         let _ = pool.connect();
@@ -37,7 +47,7 @@ impl Client {
     }
 
     fn get_router_key(chat: &str) -> String {
-        format!("router:{chat}")
+        format!("{}:{chat}", Self::ROUTER_KEY)
     }
 
     pub(crate) async fn regist(&self, chats: Vec<String>) -> anyhow::Result<()> {
@@ -54,11 +64,23 @@ impl Client {
     }
 
     pub(crate) async fn heartbeat(&self, pin: String) -> anyhow::Result<()> {
-        // let now = std::time::SystemTime::now()
-        // .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        // .unwrap()
-        // .as_secs();
-        self.inner.set(pin, (), Some(Expiration::EX(self.heartbeat_interval as i64)), None, false).await?;
+        tracing::info!("[{pin}] heartbeat");
+        self.inner
+            .set(
+                format!("{}:{pin}", Self::HEARTBEAT_KEY),
+                "",
+                Some(Expiration::EX(self.heartbeat_interval + 1)),
+                None,
+                false,
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    pub(crate) async fn del_heartbeat(&self, pin: String) -> anyhow::Result<()> {
+        tracing::info!("[{pin}] disconnect");
+        self.inner.del(pin).await?;
 
         Ok(())
     }

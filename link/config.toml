@@ -25,4 +25,4 @@ max_wait_ms = 100
 [redis]
 addrs = "redis-cluster://:123456@192.168.0.93:7001?node=@192.168.0.93:7002&node=@192.168.0.93:7003&node=@192.168.0.93:7004&node=@192.168.0.93:7005&node=@192.168.0.93:7006"
 # addrs = "redis://172.28.140.237"
-heartbeat_interval = 12
+heartbeat_interval = 10

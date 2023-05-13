@@ -66,7 +66,7 @@ async fn dispatch(
         Event::Login(pin, chats, platform) => {
             if let Some(node) = conhash.get(pin.as_bytes()) {
                 use crate::conhash::Node as _;
-                tracing::error!("[{pin}]login in {} node.", node.name());
+                tracing::info!("[{pin}] login in {} node.", node.name());
                 if let Err(e) = node
                     .mailbox
                     .send(event_loop::Event::Login(pin, chats, platform))
@@ -101,6 +101,17 @@ async fn dispatch(
                         // additional.clone(),
                         message.clone(),
                     ))
+                    .await
+                {
+                    return Err(anyhow::anyhow!("Dispatcher Event::Group Error: {e}"));
+                };
+            }
+        }
+        Event::Chat(chat::Action::Notice(chat, message)) => {
+            for event_loop in event_loops {
+                if let Err(e) = event_loop
+                    .mailbox
+                    .send(event_loop::Event::Chat(chat::Action::Notice(chat.clone(), message.clone())))
                     .await
                 {
                     return Err(anyhow::anyhow!("Dispatcher Event::Group Error: {e}"));
