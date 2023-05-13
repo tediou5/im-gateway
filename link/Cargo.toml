@@ -15,6 +15,7 @@ tracing-error = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures = "0.3"
 tokio = { version = "1", features = ["full"] }
+tokio-uring = { version = "0.4", optional = true }
 tokio-util = { version = "0.7", features = ["codec"] }
 tokio-stream = "0.1"
 axum = { version = "0.6", features = ["ws", "headers", "macros"] }
@@ -44,3 +45,8 @@ zstd = "0.12"
 
 [dev-dependencies]
 once_cell = "1"
+
+[features]
+default = []
+tokio = []
+tokio-uring = ["dep:tokio-uring"]

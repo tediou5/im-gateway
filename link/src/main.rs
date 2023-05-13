@@ -7,6 +7,9 @@
     result_option_inspect
 )]
 
+#[cfg(all(feature = "tokio", feature = "tokio_uring"))]
+compile_error!("feature \"foo\" and feature \"bar\" cannot be enabled at the same time");
+
 mod axum_handler;
 mod config;
 mod conhash;
@@ -44,6 +47,12 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::error!("version: 2023/5/12-14:13");
 
+    let _ = tokio::task::LocalSet::new().run_until(init()).await;
+
+    Ok(())
+}
+
+async fn init() -> anyhow::Result<()> {
     let local_addr = socket_addr::ipv4::local_addr().await?;
     tracing::error!("local addr: {local_addr:?}");
 
@@ -67,34 +76,32 @@ async fn main() -> anyhow::Result<()> {
             tracing::error!("setting main core [{}]", core_id.id);
         }
     };
-    tokio::task::LocalSet::new()
-        .run_until(async {
-            // TODO: init & run raft
 
-            let kafka_client =
-                kafka::Client::new(local_addr.to_string().as_str(), config.kafka.clone())
-                    .await
-                    .unwrap();
-            KAFKA_CLIENT.set(kafka_client.clone()).unwrap();
+    // TODO: init & run raft
 
-            let client = kafka_client;
-            tracing::error!("starting kafka client");
+    let kafka_client = kafka::Client::new(local_addr.to_string().as_str(), config.kafka.clone())
+        .await
+        .unwrap();
+    KAFKA_CLIENT.set(kafka_client.clone()).unwrap();
 
-            tokio::task::spawn_local(async move {
-                processor::run(core_ids).await.unwrap();
-            });
+    let client = kafka_client;
+    tracing::error!("starting kafka client");
 
-            tokio::task::spawn_local(async {
-                tracing::error!("running http server");
-                axum_handler::run(config.http).await;
-            });
+    tokio::task::spawn_local(async move {
+        processor::run(core_ids).await.unwrap();
+    });
 
-            tokio::task::spawn_local(async move {
-                if let Err(e) = client
-                    .consume(async move |record| {
-                        axum_handler::KAFKA_CONSUME_COUNT
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        if let Some(event) = record.record.value &&
+    tokio::task::spawn_local(async {
+        tracing::error!("running http server");
+        axum_handler::run(config.http).await;
+    });
+
+    tokio::task::spawn_local(async move {
+        if let Err(e) = client
+            .consume(async move |record| {
+                axum_handler::KAFKA_CONSUME_COUNT
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if let Some(event) = record.record.value &&
                             let Some(dispatcher) = DISPATCHER.get() &&
                             let Ok(event) = serde_json::from_slice(event.as_slice()) &&
                             let Ok(_) = dispatcher.send(event).await {
@@ -102,29 +109,27 @@ async fn main() -> anyhow::Result<()> {
                             } else {
                                 Err(anyhow::anyhow!("Kafka Consume Error"))
                             }
-                    })
-                    .await
-                {
-                    tracing::error!("Kafka Consume Error: {:?}", e)
-                };
-            });
+            })
+            .await
+        {
+            tracing::error!("Kafka Consume Error: {:?}", e)
+        };
+    });
 
-            tracing::error!("handle tcp connect");
-            while let Ok((stream, remote_addr)) = tcp_listener.accept().await {
-                tokio::task::spawn_local(async move {
-                    tracing::info!("{remote_addr} connected");
-                    // Process each socket concurrently.
-                    if let Err(e) = linker::tcp::auth(stream).await {
-                        tracing::error!("tcp auth error: {e:?}");
-                    } else {
-                        tracing::info!("{remote_addr} authed");
-                    };
+    tracing::error!("handle tcp connect");
+    while let Ok((stream, remote_addr)) = tcp_listener.accept().await {
+        tokio::task::spawn_local(async move {
+            tracing::info!("{remote_addr} connected");
+            // Process each socket concurrently.
+            if let Err(e) = linker::tcp::auth(stream).await {
+                tracing::error!("tcp auth error: {e:?}");
+            } else {
+                tracing::info!("{remote_addr} authed");
+            };
 
-                    Ok::<(), anyhow::Error>(())
-                });
-            }
-        })
-        .await;
+            Ok::<(), anyhow::Error>(())
+        });
+    }
 
     Ok(())
 }
