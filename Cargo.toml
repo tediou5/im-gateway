@@ -2,7 +2,7 @@
 members = [
     "link/",
     "proxy/",
-    # "rskafka/"
+    "rskafka/"
 ]
 
 [profile.dev]

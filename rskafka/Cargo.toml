@@ -110,7 +110,7 @@ optional = true
 version = "0.1"
 
 [dependencies.zstd]
-version = "0.10"
+version = "0.12"
 optional = true
 
 [dev-dependencies.assert_matches]

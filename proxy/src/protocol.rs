@@ -42,7 +42,7 @@ pub(crate) mod chat {
     pub(crate) enum Action {
         Join(String /* chat */, std::collections::HashSet<String>),
         Leave(String /* chat */, std::collections::HashSet<String>),
-        Notice(String /* chat */, String),
+        Notice(String /* chat */, #[serde(with = "hex")] Vec<u8>),
     }
 }
 

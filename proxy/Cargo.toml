@@ -21,7 +21,7 @@ tracing-error = "0.2.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 once_cell = { version = "1", default-features = false }
 clap = { version = "4", features = ["derive"] }
-rskafka = { version = "0.3" }
-# rskafka = { version = "0.3", path = "../rskafka" }
+# rskafka = { version = "0.3" }
+rskafka = { version = "0.3", path = "../rskafka" }
 fred = { version = "6.0.0", features = ["tokio-rustls"] }
 futures = "0.3"
