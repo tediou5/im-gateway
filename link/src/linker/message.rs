@@ -4,7 +4,8 @@ pub(crate) struct MessageCodec;
 #[serde(tag = "protocol", content = "data")]
 pub(crate) enum Content {
     Heart {
-        status: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        status: Option<i32>,
     },
     Connect {
         #[serde(rename(serialize = "appId", deserialize = "appId"))]

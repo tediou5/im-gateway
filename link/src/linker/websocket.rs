@@ -109,19 +109,20 @@ fn handle(
 
                     let kafka = crate::KAFKA_CLIENT
                         .get()
-                        .ok_or(anyhow::anyhow!("kafka is not available"))?;
-                    let content = serde_json::from_str::<Content>(message.as_str())?;
+                        .ok_or(anyhow::anyhow!("kafka is not available")).unwrap();
+                    let content = serde_json::from_str::<Content>(message.as_str()).unwrap();
                     let message: Message = content.into();
                     tracing::info!("websocket produce message: {message:?}");
-                    kafka.produce(message).await?;
+                    kafka.produce(message).await.unwrap();
                 }
                 axum::extract::ws::Message::Close(_close) => {
-                    let _ = tx.send(Event::Close);
                     break;
                 }
                 _ => continue,
             }
         }
+        tracing::info!("websocket: [{pin}] closed.");
+        let _ = tx.send(Event::Close);
         Ok::<(), anyhow::Error>(())
     });
     sink

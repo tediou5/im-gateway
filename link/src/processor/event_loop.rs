@@ -138,7 +138,7 @@ async fn process(
                 let mut content = None;
                 let message = std::rc::Rc::new(message.as_ref().clone());
 
-                tracing::info!("send group [{}] message", online.len());
+                tracing::info!("send group: <{chat}>: {} message", online.len());
 
                 for one in recv_list.iter() {
                     if one.send(&message, &mut content).is_err() {
