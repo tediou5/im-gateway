@@ -107,14 +107,13 @@ fn handle(
                         }
                     });
 
-                    if let Ok(content) = serde_json::from_str::<Content>(message.as_str()) {
-                        let kafka = crate::KAFKA_CLIENT
-                            .get()
-                            .ok_or(anyhow::anyhow!("kafka is not available"))?;
-                        let message: Message = content.into();
-                        tracing::trace!("websocket produce message: {message:?}");
-                        kafka.produce(message).await?;
-                    };
+                    let kafka = crate::KAFKA_CLIENT
+                        .get()
+                        .ok_or(anyhow::anyhow!("kafka is not available"))?;
+                    let content = serde_json::from_str::<Content>(message.as_str())?;
+                    let message: Message = content.into();
+                    tracing::info!("websocket produce message: {message:?}");
+                    kafka.produce(message).await?;
                 }
                 axum::extract::ws::Message::Close(_close) => {
                     let _ = tx.send(Event::Close);
