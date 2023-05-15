@@ -116,7 +116,7 @@ async fn init() -> anyhow::Result<()> {
                     }
                 };
                 let event = serde_json::from_slice(event.as_slice())?;
-                if let Err(_) = dispatcher.send(event).await {
+                if (dispatcher.send(event).await).is_err() {
                     return Err(anyhow::anyhow!(
                         "Kafka Consume Error: dispatcher send error"
                     ));

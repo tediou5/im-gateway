@@ -137,12 +137,25 @@ fn handle(
                     });
 
                     tracing::info!("tcp read message");
-                    let kafka = crate::KAFKA_CLIENT
+                    let kafka = match crate::KAFKA_CLIENT
                         .get()
-                        .ok_or(anyhow::anyhow!("kafka is not available"))?;
-                    kafka
+                        .ok_or(anyhow::anyhow!("kafka is not available"))
+                    {
+                        Ok(kafka) => kafka,
+                        Err(e) => {
+                            tracing::error!("Tcp Error: System Error: {e}");
+                            break;
+                        }
+                    };
+
+                    tracing::info!("Tcp produce message");
+                    if let Err(e) = kafka
                         .produce(crate::kafka::VecValue(req[0..n].to_vec()))
-                        .await?;
+                        .await
+                    {
+                        tracing::error!("Tcp Error: Kafka Error: {e}");
+                        break;
+                    };
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     continue;
@@ -153,6 +166,8 @@ fn handle(
                 }
             }
         }
+        tracing::info!("Tcp: [{pin}] read error.");
+        let _ = tx.send(Event::Close);
         Ok::<(), anyhow::Error>(())
     });
 

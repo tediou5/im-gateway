@@ -107,13 +107,30 @@ fn handle(
                         }
                     });
 
-                    let kafka = crate::KAFKA_CLIENT
+                    let kafka = match crate::KAFKA_CLIENT
                         .get()
-                        .ok_or(anyhow::anyhow!("kafka is not available")).unwrap();
-                    let content = serde_json::from_str::<Content>(message.as_str()).unwrap();
-                    let message: Message = content.into();
+                        .ok_or(anyhow::anyhow!("kafka is not available"))
+                    {
+                        Ok(kafka) => kafka,
+                        Err(e) => {
+                            tracing::error!("Websocket Error: System Error: {e}");
+                            break;
+                        }
+                    };
+
+                    let message: Message = match serde_json::from_str::<Content>(message.as_str()) {
+                        Ok(content) => content.into(),
+                        Err(e) => {
+                            tracing::error!("Websocket Error: Serde Error: {e}");
+                            break;
+                        }
+                    };
+
                     tracing::info!("websocket produce message: {message:?}");
-                    kafka.produce(message).await.unwrap();
+                    if let Err(e) = kafka.produce(message).await {
+                        tracing::error!("Websocket Error: Kafka Error: {e}");
+                        break;
+                    };
                 }
                 axum::extract::ws::Message::Close(_close) => {
                     break;
@@ -121,7 +138,7 @@ fn handle(
                 _ => continue,
             }
         }
-        tracing::info!("websocket: [{pin}] closed.");
+        tracing::info!("websocket: [{pin}] read error.");
         let _ = tx.send(Event::Close);
         Ok::<(), anyhow::Error>(())
     });
