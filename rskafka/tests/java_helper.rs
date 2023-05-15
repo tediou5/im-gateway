@@ -1,19 +1,19 @@
 use std::collections::BTreeMap;
 
+use chrono::{TimeZone, Utc};
 use j4rs::{Instance, InvocationArg, Jvm, JvmBuilder, MavenArtifact};
 use once_cell::sync::Lazy;
 use rskafka::{
     client::partition::Compression,
     record::{Record, RecordAndOffset},
 };
-use time::OffsetDateTime;
 
 /// If `TEST_JAVA_INTEROPT` is not set, skip the calling test by returning early.
 #[macro_export]
 macro_rules! maybe_skip_java_interopt {
     () => {{
         use std::env;
-        dotenv::dotenv().ok();
+        dotenvy::dotenv().ok();
 
         if env::var("TEST_JAVA_INTEROPT").is_err() {
             return;
@@ -68,7 +68,7 @@ pub async fn produce(
 
     let mut futures = vec![];
     for (topic_name, partition_index, record) in records {
-        let ts = (record.timestamp.unix_timestamp_nanos() / 1_000_000) as i64;
+        let ts = record.timestamp.timestamp_millis();
         let k = String::from_utf8(record.key.unwrap()).unwrap();
         let v = String::from_utf8(record.value.unwrap()).unwrap();
 
@@ -195,9 +195,9 @@ pub async fn consume(
         .expect("creating TopicPartition");
 
     let partitions = jvm
-        .create_java_list(
+        .java_list(
             "org.apache.kafka.common.TopicPartition",
-            &[InvocationArg::from(topic_partition)],
+            vec![Ok(InvocationArg::from(topic_partition))],
         )
         .expect("creating partitions array");
 
@@ -278,8 +278,7 @@ pub async fn consume(
                 key: Some(key.as_bytes().to_vec()),
                 value: Some(value.as_bytes().to_vec()),
                 headers,
-                timestamp: OffsetDateTime::from_unix_timestamp_nanos(timestamp as i128 * 1_000_000)
-                    .unwrap(),
+                timestamp: Utc.timestamp_millis_opt(timestamp).unwrap(),
             };
             let record_and_offset = RecordAndOffset { record, offset };
             results.push(record_and_offset);

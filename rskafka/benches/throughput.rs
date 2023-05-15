@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use chrono::{TimeZone, Utc};
 use criterion::{
     criterion_group, criterion_main, measurement::WallTime, BenchmarkGroup, Criterion, SamplingMode,
 };
@@ -22,13 +23,12 @@ use rdkafka::{
 use rskafka::{
     client::{
         consumer::{StartOffset, StreamConsumerBuilder as RsStreamConsumerBuilder},
-        partition::{Compression, PartitionClient},
+        partition::{Compression, PartitionClient, UnknownTopicHandling},
         producer::{aggregator::RecordAggregator, BatchProducerBuilder},
         ClientBuilder,
     },
     record::Record,
 };
-use time::OffsetDateTime;
 use tokio::runtime::Runtime;
 
 const PARALLEL_BATCH_SIZE: usize = 1_000_000;
@@ -42,7 +42,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         key: Some(vec![b'k'; 10]),
         value: Some(vec![b'x'; 10_000]),
         headers: BTreeMap::default(),
-        timestamp: OffsetDateTime::now_utc(),
+        timestamp: Utc.timestamp_millis_opt(1337).unwrap(),
     };
 
     {
@@ -315,7 +315,7 @@ impl RecordExt for Record {
 macro_rules! maybe_skip_kafka_integration {
     () => {{
         use std::env;
-        dotenv::dotenv().ok();
+        dotenvy::dotenv().ok();
 
         match (
             env::var("TEST_INTEGRATION").is_ok(),
@@ -448,7 +448,10 @@ async fn setup_rskafka(connection: Vec<String>) -> PartitionClient {
         .await
         .unwrap();
 
-    client.partition_client(topic_name, 0).unwrap()
+    client
+        .partition_client(topic_name, 0, UnknownTopicHandling::Retry)
+        .await
+        .unwrap()
 }
 
 static LOG_SETUP: Once = Once::new();

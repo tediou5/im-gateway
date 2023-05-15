@@ -41,7 +41,8 @@ impl Client {
         let bussiness_client = client.partition_client(
             config.producer.business_topic.as_str(),
             config.producer.business_partition,
-        )?;
+            rskafka::client::partition::UnknownTopicHandling::Retry,
+        ).await?;
 
         let tx = Self::handle(bussiness_client, &config);
 
@@ -112,7 +113,12 @@ impl Client {
 
         let partition_client = self
             .inner
-            .partition_client(self.local_addr.as_str(), 0)
+            .partition_client(
+                self.local_addr.as_str(),
+                0,
+                rskafka::client::partition::UnknownTopicHandling::Retry,
+            )
+            .await
             .unwrap();
 
         // construct stream consumer

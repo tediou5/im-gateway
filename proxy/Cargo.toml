@@ -20,6 +20,7 @@ tracing = "0.1"
 tracing-error = "0.2.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 once_cell = { version = "1", default-features = false }
+chrono = { version = "0.4" }
 clap = { version = "4", features = ["derive"] }
 # rskafka = { version = "0.3" }
 rskafka = { version = "0.3", path = "../rskafka" }

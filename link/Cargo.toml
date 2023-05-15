@@ -30,7 +30,8 @@ num_cpus = "1"
 uuid = { version = "1", features = ["v4", "fast-rng", "macro-diagnostics"] }
 bytes = "1"
 ahash = "0.8"
-fred = { version = "6.0.0", features = ["tokio-rustls"] }
+chrono = { version = "0.4" }
+fred = { version = "6", features = ["tokio-rustls"] }
 # rskafka = { version = "0.3" }
 rskafka = { version = "0.3", path = "../rskafka" }
 openraft = "0.8"

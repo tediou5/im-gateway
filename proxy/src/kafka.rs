@@ -44,36 +44,40 @@ impl Client {
         })
     }
 
-    fn get_partition_client(
-        &self,
-        topic: &str,
-    ) -> anyhow::Result<rskafka::client::partition::PartitionClient> {
-        Ok(self.inner.partition_client(topic, 0)?)
-    }
-
     fn handle(
-        producer: rskafka::client::partition::PartitionClient,
-        config: &crate::config::Kafka,
+        &self,
+        topic: String,
     ) -> crate::TokioSender<rskafka::record::Record> {
         use rskafka::client::producer::{aggregator::RecordAggregator, BatchProducerBuilder};
         use std::time::Duration;
 
+        let client = self.inner.clone();
+        let config = self.config.clone();
+
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<rskafka::record::Record>();
         let mut rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
-
-        // construct batch producer
-        let mut producer = BatchProducerBuilder::new(producer.into());
-
-        if let Some(linger) = config.producer.linger {
-            producer = producer.with_linger(Duration::from_millis(linger));
-        }
-
-        let producer = producer.build(RecordAggregator::new(
-            config.producer.max_batch_size, // maximum bytes
-        ));
-        let producer = std::sync::Arc::new(producer);
         tokio::task::spawn(async move {
             use tokio_stream::StreamExt as _;
+
+            let producer = client
+                .partition_client(
+                    topic,
+                    0,
+                    rskafka::client::partition::UnknownTopicHandling::Retry,
+                )
+                .await
+                .unwrap();
+            // construct batch producer
+            let mut producer = BatchProducerBuilder::new(producer.into());
+
+            if let Some(linger) = config.producer.linger {
+                producer = producer.with_linger(Duration::from_millis(linger));
+            }
+
+            let producer = producer.build(RecordAggregator::new(
+                config.producer.max_batch_size, // maximum bytes
+            ));
+            let producer = std::sync::Arc::new(producer);
 
             while let Some(message) = rx.next().await {
                 let p = producer.clone();
@@ -102,14 +106,10 @@ impl Client {
         topic: String,
         message: M,
     ) -> anyhow::Result<()> {
-        let client = self.clone();
         let mut topics = self.topics.lock().await;
-        let producer = topics.entry(topic).or_insert_with_key(|topic| {
-            Self::handle(
-                client.get_partition_client(topic.as_str()).unwrap(),
-                &self.config,
-            )
-        });
+        let producer = topics
+            .entry(topic)
+            .or_insert_with_key(|topic| self.handle(topic.to_string()));
         producer.send(message.into())?;
         crate::axum_handler::PRODUCE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(())
@@ -130,7 +130,15 @@ impl Client {
             .create_topic(topic.as_str(), 1, 1, 500)
             .await;
 
-        let partition_client = self.inner.partition_client(topic, 0).unwrap();
+        let partition_client = self
+            .inner
+            .partition_client(
+                topic,
+                0,
+                rskafka::client::partition::UnknownTopicHandling::Retry,
+            )
+            .await
+            .unwrap();
 
         // construct stream consumer
         let mut stream = StreamConsumerBuilder::new(partition_client.into(), StartOffset::Latest)

@@ -238,8 +238,6 @@ impl TryFrom<serde_json::Value> for Message {
 
 impl From<Message> for rskafka::record::Record {
     fn from(value: Message) -> Self {
-        use time::OffsetDateTime;
-
         let mut codec = MessageCodec {};
         let mut dst = bytes::BytesMut::new();
 
@@ -250,7 +248,7 @@ impl From<Message> for rskafka::record::Record {
             key: None,
             value: Some(dst.to_vec()),
             headers: std::collections::BTreeMap::new(),
-            timestamp: OffsetDateTime::now_utc(),
+            timestamp: chrono::Utc::now(),
         }
     }
 }

@@ -25,13 +25,11 @@ impl TryFrom<rskafka::record::Record> for LinkProtocol {
 
 impl From<LinkProtocol> for rskafka::record::Record {
     fn from(value: LinkProtocol) -> Self {
-        use time::OffsetDateTime;
-
         Self {
             key: None,
             value: serde_json::to_vec(&value).ok(),
             headers: std::collections::BTreeMap::new(),
-            timestamp: OffsetDateTime::now_utc(),
+            timestamp: chrono::Utc::now(),
         }
     }
 }
