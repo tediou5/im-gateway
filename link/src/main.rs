@@ -102,13 +102,15 @@ async fn init() -> anyhow::Result<()> {
                 axum_handler::KAFKA_CONSUME_COUNT
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if let Some(event) = record.record.value &&
-                            let Some(dispatcher) = DISPATCHER.get() &&
-                            let Ok(event) = serde_json::from_slice(event.as_slice()) &&
-                            let Ok(_) = dispatcher.send(event).await {
-                                Ok(())
-                            } else {
-                                Err(anyhow::anyhow!("Kafka Consume Error"))
-                            }
+                    let Some(dispatcher) = DISPATCHER.get() &&
+                    let Ok(event) = serde_json::from_slice(event.as_slice()) {
+                        match dispatcher.send(event).await {
+                            Ok(_) => Ok(()),
+                            Err(e) => Err(anyhow::anyhow!("Kafka Consume Error: {e}")),
+                        }
+                    } else {
+                        Err(anyhow::anyhow!("Kafka Consume Error: system error"))
+                    }
             })
             .await
         {

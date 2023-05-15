@@ -97,13 +97,15 @@ fn handle(
             let pin = pin.clone();
             match message {
                 axum::extract::ws::Message::Text(message) => {
-                    tracing::trace!("[{pin}] websocket received message: {message:?}");
+                    tracing::info!("[{pin}] websocket received message: {message:?}");
 
-                    if let Some(redis) = crate::REDIS_CLIENT.get() {
-                        if let Err(e) = redis.heartbeat(pin.to_string()).await {
-                            tracing::error!("update [{pin}] heartbeat error: {}", e)
-                        };
-                    }
+                    tokio::task::spawn_local(async move {
+                        if let Some(redis) = crate::REDIS_CLIENT.get() {
+                            if let Err(e) = redis.heartbeat(pin.to_string()).await {
+                                tracing::error!("update [{pin}] heartbeat error: {}", e)
+                            };
+                        }
+                    });
 
                     if let Ok(content) = serde_json::from_str::<Content>(message.as_str()) {
                         let kafka = crate::KAFKA_CLIENT

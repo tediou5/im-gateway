@@ -111,7 +111,10 @@ async fn dispatch(
             for event_loop in event_loops {
                 if let Err(e) = event_loop
                     .mailbox
-                    .send(event_loop::Event::Chat(chat::Action::Notice(chat.clone(), message.clone())))
+                    .send(event_loop::Event::Chat(chat::Action::Notice(
+                        chat.clone(),
+                        message.clone(),
+                    )))
                     .await
                 {
                     return Err(anyhow::anyhow!("Dispatcher Event::Group Error: {e}"));

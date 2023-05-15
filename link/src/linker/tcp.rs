@@ -128,11 +128,13 @@ fn handle(
                         break;
                     }
 
-                    if let Some(redis) = crate::REDIS_CLIENT.get() {
-                        if let Err(e) = redis.heartbeat(pin.to_string()).await {
-                            tracing::error!("update [{pin}] heartbeat error: {}", e)
-                        };
-                    }
+                    tokio::task::spawn_local(async move {
+                        if let Some(redis) = crate::REDIS_CLIENT.get() {
+                            if let Err(e) = redis.heartbeat(pin.to_string()).await {
+                                tracing::error!("update [{pin}] heartbeat error: {}", e)
+                            };
+                        }
+                    });
 
                     tracing::info!("tcp read message");
                     let kafka = crate::KAFKA_CLIENT
