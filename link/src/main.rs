@@ -101,16 +101,28 @@ async fn init() -> anyhow::Result<()> {
             .consume(async move |record| {
                 axum_handler::KAFKA_CONSUME_COUNT
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if let Some(event) = record.record.value &&
-                    let Some(dispatcher) = DISPATCHER.get() &&
-                    let Ok(event) = serde_json::from_slice(event.as_slice()) {
-                        match dispatcher.send(event).await {
-                            Ok(_) => Ok(()),
-                            Err(e) => Err(anyhow::anyhow!("Kafka Consume Error: {e}")),
-                        }
-                    } else {
-                        Err(anyhow::anyhow!("Kafka Consume Error: system error"))
+                let dispatcher = match DISPATCHER.get() {
+                    Some(dispatcher) => dispatcher,
+                    None => {
+                        return Err(anyhow::anyhow!(
+                            "Kafka Consume Error: dispatcher not yet initialized"
+                        ))
                     }
+                };
+                let event = match record.record.value {
+                    Some(event) => event,
+                    None => {
+                        return Err(anyhow::anyhow!("Kafka Consume Error: record value is none"))
+                    }
+                };
+                let event = serde_json::from_slice(event.as_slice())?;
+                if let Err(_) = dispatcher.send(event).await {
+                    return Err(anyhow::anyhow!(
+                        "Kafka Consume Error: dispatcher send error"
+                    ));
+                };
+
+                Ok(())
             })
             .await
         {
@@ -132,6 +144,5 @@ async fn init() -> anyhow::Result<()> {
             Ok::<(), anyhow::Error>(())
         });
     }
-
     Ok(())
 }
