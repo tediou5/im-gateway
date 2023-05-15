@@ -44,10 +44,7 @@ impl Client {
         })
     }
 
-    fn handle(
-        &self,
-        topic: String,
-    ) -> crate::TokioSender<rskafka::record::Record> {
+    fn handle(&self, topic: String) -> crate::TokioSender<rskafka::record::Record> {
         use rskafka::client::producer::{aggregator::RecordAggregator, BatchProducerBuilder};
         use std::time::Duration;
 

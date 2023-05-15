@@ -38,11 +38,13 @@ impl Client {
         let controller_client = client.controller_client()?;
         let _ = controller_client.create_topic(local_addr, 1, 1, 500).await;
 
-        let bussiness_client = client.partition_client(
-            config.producer.business_topic.as_str(),
-            config.producer.business_partition,
-            rskafka::client::partition::UnknownTopicHandling::Retry,
-        ).await?;
+        let bussiness_client = client
+            .partition_client(
+                config.producer.business_topic.as_str(),
+                config.producer.business_partition,
+                rskafka::client::partition::UnknownTopicHandling::Retry,
+            )
+            .await?;
 
         let tx = Self::handle(bussiness_client, &config);
 
