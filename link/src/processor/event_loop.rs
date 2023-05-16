@@ -38,11 +38,11 @@ pub(super) fn run(core_id: core_affinity::CoreId) -> EventLoop {
             .unwrap();
         let res = core_affinity::set_for_current(core_id);
         if res {
-            tracing::error!(
+            println!(
                 "running event loop: >>> processor-event-loop-{id} set for core id: [{id}] <<<"
             );
         } else {
-            tracing::error!("error for pin current cpu");
+            tracing::error!("error for pin current cpu: {id}");
         }
 
         let local = tokio::task::LocalSet::new();

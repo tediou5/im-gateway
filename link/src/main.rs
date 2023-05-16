@@ -54,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn init() -> anyhow::Result<()> {
     let local_addr = socket_addr::ipv4::local_addr().await?;
-    tracing::error!("local addr: {local_addr:?}");
+    println!("local addr: {local_addr:?}");
 
     let args = <Args as clap::Parser>::parse();
     let config = config::Config::init(args.config);
@@ -67,13 +67,13 @@ async fn init() -> anyhow::Result<()> {
 
     let redis_client = redis::Client::new(local_addr.to_string(), config.redis).await?;
     REDIS_CLIENT.set(redis_client).unwrap();
-    tracing::error!("starting redis client");
+    println!("starting redis client");
 
     let mut core_ids = core_affinity::get_core_ids().unwrap();
     let main_core_id = core_ids.pop();
     if let Some(core_id) = main_core_id {
         if core_affinity::set_for_current(core_id) {
-            tracing::error!("setting main core [{}]", core_id.id);
+            println!("setting main core [{}]", core_id.id);
         }
     };
 
@@ -85,14 +85,14 @@ async fn init() -> anyhow::Result<()> {
     KAFKA_CLIENT.set(kafka_client.clone()).unwrap();
 
     let client = kafka_client;
-    tracing::error!("starting kafka client");
+    println!("starting kafka client");
 
     tokio::task::spawn_local(async move {
         processor::run(core_ids).await.unwrap();
     });
 
     tokio::task::spawn_local(async {
-        tracing::error!("running http server");
+        println!("running http server");
         axum_handler::run(config.http).await;
     });
 
