@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let local_addr = socket_addr::ipv4::local_addr().await?;
-    tracing::error!("local addr: {local_addr:?}");
+    println!("local addr: {local_addr:?}");
 
     let args = <Args as clap::Parser>::parse();
     let config = config::Config::init(args.config);
@@ -95,9 +95,9 @@ async fn main() -> anyhow::Result<()> {
             .await;
     });
 
-    tracing::error!("starting consume kafka");
+    println!("starting consume kafka");
 
-    tracing::error!("running http server");
+    println!("running http server");
     axum_handler::run(config.http).await;
     tracing::error!("closed.");
 

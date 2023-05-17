@@ -45,7 +45,7 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    tracing::error!("version: 2023/5/12-14:13");
+    println!("version: 2023/5/17-15:00");
 
     let _ = tokio::task::LocalSet::new().run_until(init()).await;
 
@@ -130,7 +130,7 @@ async fn init() -> anyhow::Result<()> {
         };
     });
 
-    tracing::error!("handle tcp connect");
+    println!("handle tcp connect");
     while let Ok((stream, remote_addr)) = tcp_listener.accept().await {
         tokio::task::spawn_local(async move {
             tracing::info!("{remote_addr} connected");

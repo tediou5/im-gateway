@@ -18,5 +18,5 @@ min_batch_size = 1
 max_batch_size = 52_428_800
 max_wait_ms = 100
 
-[zstd]
-dict = "./dict"
+[compress]
+dict = "./dicts/dict"
