@@ -20,3 +20,4 @@ max_wait_ms = 100
 
 [compress]
 dict = "./dicts/dict"
+level = 13

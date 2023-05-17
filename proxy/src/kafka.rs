@@ -11,7 +11,8 @@ pub(crate) struct Client {
     inner: std::sync::Arc<rskafka::client::Client>,
     local_addr: String,
     config: crate::config::Kafka,
-    pub(crate) compress: Option<crate::config::Compress>,
+    pub(crate) compress_level: Option<i32>,
+    pub(crate) compress_dict: Option<std::sync::Arc<Vec<u8>>>,
 }
 
 impl Clone for Client {
@@ -21,7 +22,8 @@ impl Clone for Client {
             inner: self.inner.clone(),
             config: self.config.clone(),
             local_addr: self.local_addr.clone(),
-            compress: self.compress.clone(),
+            compress_level: self.compress_level.clone(),
+            compress_dict: self.compress_dict.clone(),
         }
     }
 }
@@ -47,7 +49,8 @@ impl Client {
             inner: client,
             config,
             local_addr,
-            compress,
+            compress_level: compress.as_ref().map(|c| c.level),
+            compress_dict: compress.and_then(|c| std::fs::read(c.dict).map(Into::into).ok()),
         })
     }
 

@@ -47,4 +47,5 @@ pub(crate) struct Consumer {
 #[derive(serde_derive::Deserialize, Debug, Clone)]
 pub(crate) struct Compress {
     pub(crate) dict: String,
+    pub(crate) level: i32,
 }

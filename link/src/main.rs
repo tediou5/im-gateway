@@ -29,9 +29,6 @@ static DISPATCHER: OnceCell<tokio::sync::mpsc::Sender<processor::Event>> = OnceC
 static REDIS_CLIENT: OnceCell<redis::Client> = OnceCell::new();
 static KAFKA_CLIENT: OnceCell<kafka::Client> = OnceCell::new();
 type TokioSender<T> = tokio::sync::mpsc::UnboundedSender<T>;
-// type TokioSender<T> = tokio::sync::mpsc::Sender<T>;
-// type Sender = TokioSender<linker::Event>;
-// type Sender = TokioSender<processor::TcpEvent>;
 
 #[derive(clap::Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -115,6 +112,7 @@ async fn init() -> anyhow::Result<()> {
                         return Err(anyhow::anyhow!("Kafka Consume Error: record value is none"))
                     }
                 };
+                tracing::error!("consume {} len message.", event.len());
                 let event = serde_json::from_slice(event.as_slice())?;
                 if (dispatcher.send(event).await).is_err() {
                     return Err(anyhow::anyhow!(
