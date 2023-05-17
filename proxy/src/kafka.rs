@@ -2,12 +2,16 @@
 pub(crate) struct Client {
     topics: std::sync::Arc<
         tokio::sync::Mutex<
-            std::collections::HashMap<String, crate::TokioSender<rskafka::record::Record>>,
+            std::collections::HashMap<
+                String,
+                tokio::sync::mpsc::UnboundedSender<rskafka::record::Record>,
+            >,
         >,
     >,
     inner: std::sync::Arc<rskafka::client::Client>,
     local_addr: String,
     config: crate::config::Kafka,
+    pub(crate) compress: Option<crate::config::Compress>,
 }
 
 impl Clone for Client {
@@ -17,6 +21,7 @@ impl Clone for Client {
             inner: self.inner.clone(),
             config: self.config.clone(),
             local_addr: self.local_addr.clone(),
+            compress: self.compress.clone(),
         }
     }
 }
@@ -25,6 +30,7 @@ impl Client {
     pub(crate) async fn new(
         local_addr: String,
         config: crate::config::Kafka,
+        compress: Option<crate::config::Compress>,
     ) -> anyhow::Result<Self> {
         use rskafka::client::ClientBuilder;
 
@@ -41,10 +47,11 @@ impl Client {
             inner: client,
             config,
             local_addr,
+            compress,
         })
     }
 
-    fn handle(&self, topic: String) -> crate::TokioSender<rskafka::record::Record> {
+    fn handle(&self, topic: String) -> tokio::sync::mpsc::UnboundedSender<rskafka::record::Record> {
         use rskafka::client::producer::{aggregator::RecordAggregator, BatchProducerBuilder};
         use std::time::Duration;
 

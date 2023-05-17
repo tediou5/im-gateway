@@ -3,6 +3,7 @@ pub(crate) struct Config {
     pub(crate) http: Http,
     pub(crate) kafka: Kafka,
     pub(crate) redis: Redis,
+    pub(crate) compress: Option<Compress>,
 }
 
 impl Config {
@@ -41,4 +42,9 @@ pub(crate) struct Consumer {
     pub(crate) min_batch_size: i32,
     pub(crate) max_batch_size: i32,
     pub(crate) max_wait_ms: i32,
+}
+
+#[derive(serde_derive::Deserialize, Debug, Clone)]
+pub(crate) struct Compress {
+    pub(crate) dict: String,
 }
