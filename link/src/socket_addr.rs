@@ -1,10 +1,10 @@
 pub(crate) mod ipv4 {
     use std::net::{Ipv4Addr, SocketAddrV4};
 
-    pub(crate) async fn local_addr() -> anyhow::Result<Ipv4Addr> {
-        let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
+    pub(crate) fn local_addr() -> anyhow::Result<Ipv4Addr> {
+        let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
 
-        socket.connect("1.1.1.1:80").await?;
+        socket.connect("1.1.1.1:80")?;
 
         match socket.local_addr()? {
             std::net::SocketAddr::V4(addr) => Ok(*addr.ip()),

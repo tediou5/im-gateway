@@ -7,8 +7,8 @@
     result_option_inspect
 )]
 
-#[cfg(all(feature = "tokio", feature = "tokio_uring"))]
-compile_error!("feature \"foo\" and feature \"bar\" cannot be enabled at the same time");
+// #[cfg(all(feature = "tokio", feature = "tokio_uring"))]
+// compile_error!("feature \"foo\" and feature \"bar\" cannot be enabled at the same time");
 
 mod axum_handler;
 mod config;
@@ -25,7 +25,7 @@ use once_cell::sync::OnceCell;
 static AUTH_URL: OnceCell<String> = OnceCell::new();
 static HTTP_CLIENT: OnceCell<reqwest::Client> = OnceCell::new();
 
-static DISPATCHER: OnceCell<tokio::sync::mpsc::Sender<processor::Event>> = OnceCell::new();
+static DISPATCHER: OnceCell<local_sync::mpsc::bounded::Tx<processor::Event>> = OnceCell::new();
 static REDIS_CLIENT: OnceCell<redis::Client> = OnceCell::new();
 static KAFKA_CLIENT: OnceCell<kafka::Client> = OnceCell::new();
 type TokioSender<T> = tokio::sync::mpsc::UnboundedSender<T>;
@@ -42,21 +42,22 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    println!("version: 2023/5/17-15:00");
+    println!("version: 2023/5/18-1:20");
 
-    let _ = tokio::task::LocalSet::new().run_until(init()).await;
+    let _ = tokio_uring::start(init);
 
     Ok(())
 }
 
 async fn init() -> anyhow::Result<()> {
-    let local_addr = socket_addr::ipv4::local_addr().await?;
+    let local_addr = socket_addr::ipv4::local_addr()?;
     println!("local addr: {local_addr:?}");
 
     let args = <Args as clap::Parser>::parse();
     let config = config::Config::init(args.config);
 
-    let tcp_listener = tokio::net::TcpListener::bind(config.get_tcp_addr_str()).await?;
+    let tcp_listener = tokio_uring::net::TcpListener::bind(config.get_tcp_addr_str())?;
+    // let tcp_listener = tokio::net::TcpListener::bind(config.get_tcp_addr_str()).await?;
 
     let client = reqwest::Client::new();
     AUTH_URL.set(config.tcp.auth).unwrap();
@@ -84,7 +85,7 @@ async fn init() -> anyhow::Result<()> {
     let client = kafka_client;
     println!("starting kafka client");
 
-    tokio::task::spawn_local(async move {
+    tokio_uring::spawn(async move {
         processor::run(core_ids).await.unwrap();
     });
 
@@ -93,7 +94,7 @@ async fn init() -> anyhow::Result<()> {
         axum_handler::run(config.http).await;
     });
 
-    tokio::task::spawn_local(async move {
+    tokio_uring::spawn(async move {
         if let Err(e) = client
             .consume(async move |record| {
                 axum_handler::KAFKA_CONSUME_COUNT
@@ -130,7 +131,7 @@ async fn init() -> anyhow::Result<()> {
 
     println!("handle tcp connect");
     while let Ok((stream, remote_addr)) = tcp_listener.accept().await {
-        tokio::task::spawn_local(async move {
+        tokio_uring::spawn(async move {
             tracing::info!("{remote_addr} connected");
             // Process each socket concurrently.
             if let Err(e) = linker::tcp::auth(stream).await {

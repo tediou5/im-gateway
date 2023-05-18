@@ -36,8 +36,8 @@ impl Clone for Event {
 }
 
 pub async fn run(core_ids: Vec<core_affinity::CoreId>) -> anyhow::Result<()> {
-    let (collect_tx, collect_rx) = tokio::sync::mpsc::channel::<Event>(20480);
-    let mut collect_rx = tokio_stream::wrappers::ReceiverStream::new(collect_rx);
+    let (tx, rx) = local_sync::mpsc::bounded::channel::<Event>(4096);
+    let mut rx = local_sync::stream_wrappers::bounded::ReceiverStream::new(rx);
     crate::DISPATCHER.set(collect_tx).unwrap();
 
     // save every event_loop

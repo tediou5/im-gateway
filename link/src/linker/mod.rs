@@ -7,8 +7,8 @@ pub(crate) mod websocket;
 
 #[derive(Debug)]
 pub(crate) enum Platform {
-    App(tokio::net::TcpStream),
-    Pc(tokio::net::TcpStream),
+    App(tokio_uring::net::TcpStream),
+    Pc(tokio_uring::net::TcpStream),
     Web(axum::extract::ws::WebSocket),
 }
 

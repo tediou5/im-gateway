@@ -38,10 +38,6 @@ pub(super) fn run(core_id: core_affinity::CoreId) -> EventLoop {
     let id = core_id.id;
 
     std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
         let res = core_affinity::set_for_current(core_id);
         if res {
             println!(
@@ -51,46 +47,31 @@ pub(super) fn run(core_id: core_affinity::CoreId) -> EventLoop {
             tracing::error!("error for pin current cpu: {id}");
         }
 
-        let local = tokio::task::LocalSet::new();
-        let local_set = local.run_until(async {
-            tokio::task::spawn_local(async move {
-                use tokio_stream::StreamExt as _;
+        tokio_uring::start(async {
+            use tokio_stream::StreamExt as _;
 
-                let mut users: ahash::AHashMap<std::rc::Rc<String>, crate::linker::User> =
-                    ahash::AHashMap::new();
-                let mut chats: ahash::AHashMap<
-                    String,
-                    std::collections::HashSet<crate::linker::User>,
-                > = ahash::AHashMap::new();
+            let mut users: ahash::AHashMap<std::rc::Rc<String>, crate::linker::User> =
+                ahash::AHashMap::new();
+            let mut chats: ahash::AHashMap<String, std::collections::HashSet<crate::linker::User>> =
+                ahash::AHashMap::new();
 
-                loop {
-                    tokio::select! {
-                        Some(event) = collect_rx.next() =>
-                        if let Err(e) = process(&mut users, &mut chats, event).await {
-                            // TODO: handle error
-                            tracing::error!("preocess event error: {e}");
-                        },
-                        Some(system_event) = system_rx.next() =>
-                        if let Err(e) = process_system(&mut users, &mut chats, system_event).await {
-                            // TODO: handle error
-                            tracing::error!("preocess event error: {e}");
-                        },
-                        else => break,
-                    }
+            loop {
+                tokio::select! {
+                    Some(event) = collect_rx.next() =>
+                    if let Err(e) = process(&mut users, &mut chats, event).await {
+                        // TODO: handle error
+                        tracing::error!("preocess event error: {e}");
+                    },
+                    Some(system_event) = system_rx.next() =>
+                    if let Err(e) = process_system(&mut users, &mut chats, system_event).await {
+                        // TODO: handle error
+                        tracing::error!("preocess event error: {e}");
+                    },
+                    else => break,
                 }
-
-                // while let Some(event) = collect_rx.next().await {
-                //     if let Err(e) = process(&mut users, &mut chats, event).await {
-                //         // TODO: handle error
-                //         tracing::error!("preocess event error: {e}");
-                //     };
-                // }
-            })
-            .await
-            .unwrap();
+            }
         });
 
-        rt.block_on(local_set);
         tracing::error!("processor-event-loop-{id} has been cancelled");
     });
 
@@ -130,7 +111,7 @@ async fn process_system(
                 });
                 member.insert(user_connection.clone());
             }
-            tokio::task::spawn_local(async move {
+            tokio_uring::spawn(async move {
                 let redis_client = crate::REDIS_CLIENT.get().unwrap();
                 redis_client.regist(regiest_chats).await?;
                 Ok::<(), anyhow::Error>(())
