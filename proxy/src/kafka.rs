@@ -22,7 +22,7 @@ impl Clone for Client {
             inner: self.inner.clone(),
             config: self.config.clone(),
             local_addr: self.local_addr.clone(),
-            compress_level: self.compress_level.clone(),
+            compress_level: self.compress_level,
             compress_dict: self.compress_dict.clone(),
         }
     }

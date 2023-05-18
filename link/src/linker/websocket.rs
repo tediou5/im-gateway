@@ -1,6 +1,5 @@
-use super::{Content, Message};
-
-pub(crate) type Sender = tokio::sync::mpsc::UnboundedSender<Event>;
+pub(crate) type Sender = local_sync::mpsc::unbounded::Tx<Event>;
+// pub(crate) type Sender = tokio::sync::mpsc::UnboundedSender<Event>;
 
 #[derive(Debug)]
 pub(crate) enum Event {
@@ -18,7 +17,7 @@ pub(crate) async fn websocket(
             _ => return,
         };
 
-        let content = match serde_json::from_str::<Content>(auth.as_str()) {
+        let content = match serde_json::from_str::<super::Content>(auth.as_str()) {
             Ok(content) => content,
             Err(_) => return,
         };
@@ -41,8 +40,10 @@ pub(crate) async fn websocket(
 }
 
 pub(crate) fn process(socket: axum::extract::ws::WebSocket, pin: std::rc::Rc<String>) -> Sender {
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    let mut rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
+    let (tx, rx) = local_sync::mpsc::unbounded::channel::<Event>();
+    let mut rx = local_sync::stream_wrappers::unbounded::ReceiverStream::new(rx);
+    // let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    // let mut rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
     let mut write = handle(socket, tx.clone(), pin.clone());
 
     tokio::task::spawn_local(async move {
@@ -118,7 +119,7 @@ fn handle(
                         }
                     };
 
-                    let message: Message = match serde_json::from_str::<Content>(message.as_str()) {
+                    let message: super::Message = match serde_json::from_str::<super::Content>(message.as_str()) {
                         Ok(content) => content.into(),
                         Err(e) => {
                             tracing::error!("Websocket Error: Serde Error: {e}");

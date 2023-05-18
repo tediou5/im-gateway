@@ -1,4 +1,5 @@
-pub(crate) type Sender = tokio::sync::mpsc::UnboundedSender<Event>;
+pub(crate) type Sender = local_sync::mpsc::unbounded::Tx<Event>;
+// pub(crate) type Sender = tokio::sync::mpsc::UnboundedSender<Event>;
 
 #[derive(Debug, Clone)]
 pub(crate) enum Event {
@@ -52,8 +53,10 @@ pub(crate) fn process(stream: tokio::net::TcpStream, pin: std::rc::Rc<String>) -
     );
     // Use an unbounded channel to handle buffering and flushing of messages
     // to the event source...
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    let mut rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
+    let (tx, rx) = local_sync::mpsc::unbounded::channel::<Event>();
+    let mut rx = local_sync::stream_wrappers::unbounded::ReceiverStream::new(rx);
+    // let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    // let mut rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
 
     let mut write = handle(stream, tx.clone(), pin.clone());
 

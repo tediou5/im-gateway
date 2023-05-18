@@ -7,8 +7,8 @@
     result_option_inspect
 )]
 
-#[cfg(all(feature = "tokio", feature = "tokio_uring"))]
-compile_error!("feature \"foo\" and feature \"bar\" cannot be enabled at the same time");
+// #[cfg(all(feature = "tokio", feature = "tokio_uring"))]
+// compile_error!("feature \"foo\" and feature \"bar\" cannot be enabled at the same time");
 
 mod axum_handler;
 mod config;
@@ -42,7 +42,7 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    println!("version: 2023/5/17-15:00");
+    println!("version: 2023/5/18-11:08");
 
     let _ = tokio::task::LocalSet::new().run_until(init()).await;
 

@@ -1,9 +1,4 @@
 pub(super) enum Event {
-    Login(
-        String,                      /* pin */
-        Vec<std::sync::Arc<String>>, /* chats */
-        crate::linker::Platform,
-    ),
     Private(String /* recv */, std::sync::Arc<Vec<u8>>),
     Group(
         String,                            /* chat */
@@ -13,10 +8,19 @@ pub(super) enum Event {
     Chat(super::chat::Action),
 }
 
+pub(super) enum SystemEvent {
+    Login(
+        String,                      /* pin */
+        Vec<std::sync::Arc<String>>, /* chats */
+        crate::linker::Platform,
+    ),
+}
+
 #[derive(Clone)]
 pub(super) struct EventLoop {
     name: std::rc::Rc<String>,
     pub(super) mailbox: tokio::sync::mpsc::Sender<Event>,
+    pub(super) system_mailbox: tokio::sync::mpsc::Sender<SystemEvent>,
 }
 
 impl crate::conhash::Node for EventLoop {
@@ -28,6 +32,8 @@ impl crate::conhash::Node for EventLoop {
 pub(super) fn run(core_id: core_affinity::CoreId) -> EventLoop {
     let (collect_tx, collect_rx) = tokio::sync::mpsc::channel::<Event>(2048);
     let mut collect_rx = tokio_stream::wrappers::ReceiverStream::new(collect_rx);
+    let (system_tx, system_rx) = tokio::sync::mpsc::channel::<SystemEvent>(2048);
+    let mut system_rx = tokio_stream::wrappers::ReceiverStream::new(system_rx);
 
     let id = core_id.id;
 
@@ -57,11 +63,20 @@ pub(super) fn run(core_id: core_affinity::CoreId) -> EventLoop {
                     std::collections::HashSet<crate::linker::User>,
                 > = ahash::AHashMap::new();
 
-                while let Some(event) = collect_rx.next().await {
-                    if let Err(e) = process(&mut users, &mut chats, event).await {
-                        // TODO: handle error
-                        tracing::error!("preocess event error: {e}");
-                    };
+                loop {
+                    tokio::select! {
+                        Some(event) = collect_rx.next() =>
+                        if let Err(e) = process(&mut users, &mut chats, event).await {
+                            // TODO: handle error
+                            tracing::error!("preocess event error: {e}");
+                        },
+                        Some(system_event) = system_rx.next() =>
+                        if let Err(e) = process_system(&mut users, &mut chats, system_event).await {
+                            // TODO: handle error
+                            tracing::error!("preocess event error: {e}");
+                        },
+                        else => break,
+                    }
                 }
             })
             .await
@@ -75,16 +90,17 @@ pub(super) fn run(core_id: core_affinity::CoreId) -> EventLoop {
     EventLoop {
         name: format!("processor-event-loop-{id}").into(),
         mailbox: collect_tx,
+        system_mailbox: system_tx,
     }
 }
 
-async fn process(
+async fn process_system(
     users: &mut ahash::AHashMap<std::rc::Rc<String>, crate::linker::User>,
     chats: &mut ahash::AHashMap<String, std::collections::HashSet<crate::linker::User>>,
-    event: Event,
+    system_event: SystemEvent,
 ) -> anyhow::Result<()> {
-    match event {
-        Event::Login(pin, chat_list, platform) => {
+    match system_event {
+        SystemEvent::Login(pin, chat_list, platform) => {
             tracing::error!("{pin} login");
             let pin = std::rc::Rc::new(pin);
             if let Some(redis) = crate::REDIS_CLIENT.get() {
@@ -113,6 +129,46 @@ async fn process(
                 Ok::<(), anyhow::Error>(())
             });
         }
+    }
+
+    Ok(())
+}
+
+async fn process(
+    users: &mut ahash::AHashMap<std::rc::Rc<String>, crate::linker::User>,
+    chats: &mut ahash::AHashMap<String, std::collections::HashSet<crate::linker::User>>,
+    event: Event,
+) -> anyhow::Result<()> {
+    match event {
+        // Event::Login(pin, chat_list, platform) => {
+        //     tracing::error!("{pin} login");
+        //     let pin = std::rc::Rc::new(pin);
+        //     if let Some(redis) = crate::REDIS_CLIENT.get() {
+        //         if let Err(e) = redis.heartbeat(pin.to_string()).await {
+        //             tracing::error!("update [{pin}] heartbeat error: {}", e)
+        //         };
+        //     }
+        //     let user_connection = users
+        //         .entry(pin)
+        //         .or_insert_with_key(|pin| crate::linker::User::from_pin(pin.clone()));
+
+        //     user_connection.update(platform);
+
+        //     let mut regiest_chats = Vec::new();
+
+        //     for chat in chat_list {
+        //         let member = chats.entry(chat.to_string()).or_insert_with_key(|chat| {
+        //             regiest_chats.push(chat.to_string());
+        //             Default::default()
+        //         });
+        //         member.insert(user_connection.clone());
+        //     }
+        //     tokio::task::spawn_local(async move {
+        //         let redis_client = crate::REDIS_CLIENT.get().unwrap();
+        //         redis_client.regist(regiest_chats).await?;
+        //         Ok::<(), anyhow::Error>(())
+        //     });
+        // }
         Event::Private(pin, message) => {
             let mut content = None;
             let message = std::rc::Rc::new(message.as_ref().clone());
