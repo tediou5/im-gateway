@@ -140,35 +140,6 @@ async fn process(
     event: Event,
 ) -> anyhow::Result<()> {
     match event {
-        // Event::Login(pin, chat_list, platform) => {
-        //     tracing::error!("{pin} login");
-        //     let pin = std::rc::Rc::new(pin);
-        //     if let Some(redis) = crate::REDIS_CLIENT.get() {
-        //         if let Err(e) = redis.heartbeat(pin.to_string()).await {
-        //             tracing::error!("update [{pin}] heartbeat error: {}", e)
-        //         };
-        //     }
-        //     let user_connection = users
-        //         .entry(pin)
-        //         .or_insert_with_key(|pin| crate::linker::User::from_pin(pin.clone()));
-
-        //     user_connection.update(platform);
-
-        //     let mut regiest_chats = Vec::new();
-
-        //     for chat in chat_list {
-        //         let member = chats.entry(chat.to_string()).or_insert_with_key(|chat| {
-        //             regiest_chats.push(chat.to_string());
-        //             Default::default()
-        //         });
-        //         member.insert(user_connection.clone());
-        //     }
-        //     tokio::task::spawn_local(async move {
-        //         let redis_client = crate::REDIS_CLIENT.get().unwrap();
-        //         redis_client.regist(regiest_chats).await?;
-        //         Ok::<(), anyhow::Error>(())
-        //     });
-        // }
         Event::Private(pin, message) => {
             let mut content = None;
             let message = std::rc::Rc::new(message.as_ref().clone());
