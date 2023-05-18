@@ -68,8 +68,8 @@ async fn dispatch(
                 use crate::conhash::Node as _;
                 tracing::info!("[{pin}] login in {} node.", node.name());
                 if let Err(e) = node
-                    .system_mailbox
-                    .send(event_loop::SystemEvent::Login(pin, chats, platform))
+                    .mailbox
+                    .send(event_loop::Event::Login(pin, chats, platform))
                     .await
                 {
                     return Err(anyhow::anyhow!("Dispatcher Event::Login Error: {e}"));

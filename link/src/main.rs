@@ -133,6 +133,7 @@ async fn init() -> anyhow::Result<()> {
         tokio::task::spawn_local(async move {
             tracing::info!("{remote_addr} connected");
             // Process each socket concurrently.
+            stream.set_nodelay(true).unwrap();
             if let Err(e) = linker::tcp::auth(stream).await {
                 tracing::error!("tcp auth error: {e:?}");
             } else {

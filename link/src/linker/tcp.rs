@@ -13,7 +13,7 @@ pub(crate) async fn auth(mut stream: tokio::net::TcpStream) -> anyhow::Result<()
     crate::axum_handler::LINK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let mut req = [0; 4096];
+    let mut req = [0; 2048];
 
     let auth = match stream.read(&mut req).await {
         Ok(n) => {
@@ -113,7 +113,7 @@ fn handle(
     tracing::trace!("ready to handle tcp request: {:?}", stream.peer_addr());
     let (read, write) = stream.into_split();
     tokio::task::spawn_local(async move {
-        let mut req = [0; 4096];
+        let mut req = [0; 2048];
         loop {
             let pin = pin.clone();
             // Wait for the socket to be readable
@@ -131,15 +131,17 @@ fn handle(
                         break;
                     }
 
-                    tokio::task::spawn_local(async move {
-                        if let Some(redis) = crate::REDIS_CLIENT.get() {
-                            if let Err(e) = redis.heartbeat(pin.to_string()).await {
-                                tracing::error!("update [{pin}] heartbeat error: {}", e)
-                            };
-                        }
-                    });
+                    if n <= 100 {
+                        tokio::task::spawn_local(async move {
+                            if let Some(redis) = crate::REDIS_CLIENT.get() {
+                                if let Err(e) = redis.heartbeat(pin.to_string()).await {
+                                    tracing::error!("update [{pin}] heartbeat error: {}", e)
+                                };
+                            }
+                        });
+                    }
 
-                    tracing::info!("tcp read message");
+                    tracing::info!("tcp read message length: {n}");
                     let kafka = match crate::KAFKA_CLIENT
                         .get()
                         .ok_or(anyhow::anyhow!("kafka is not available"))

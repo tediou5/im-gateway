@@ -38,10 +38,6 @@ async fn main() -> anyhow::Result<()> {
                                 // FIXME: handle error
                                 if let Some(level) = kafka.compress_level &&
                                 let Some(dict) = kafka.compress_dict.clone() {
-                                    // let _old = std::mem::replace(
-                                    //     message,
-                                    //     vec![1, 2, 3, 4, 5, 6, 7, 8],
-                                    // );
                                     let _old = std::mem::replace(
                                         message,
                                         compression::compress(message, level, dict.as_slice()).unwrap(),
@@ -70,10 +66,6 @@ async fn main() -> anyhow::Result<()> {
                                 // FIXME: handle error
                                 if let Some(level) = kafka.compress_level &&
                                 let Some(dict) = kafka.compress_dict.clone() {
-                                    // let _old = std::mem::replace(
-                                    //     message,
-                                    //     vec![1, 2, 3, 4, 5, 6, 7, 8],
-                                    // );
                                     let _old = std::mem::replace(
                                         message,
                                         compression::compress(message, level, dict.as_slice()).unwrap(),
@@ -89,10 +81,6 @@ async fn main() -> anyhow::Result<()> {
                                 // FIXME: handle error
                                 if let Some(level) = kafka.compress_level &&
                                 let Some(dict) = kafka.compress_dict.clone() {
-                                    // let _old = std::mem::replace(
-                                    //     message,
-                                    //     vec![1, 2, 3, 4, 5, 6, 7, 8],
-                                    // );
                                     let _old = std::mem::replace(
                                         message,
                                         compression::compress(message, level, dict.as_slice()).unwrap(),
