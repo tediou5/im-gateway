@@ -131,16 +131,6 @@ fn handle(
                         break;
                     }
 
-                    let mut length_bytes = [0u8; 4];
-                    length_bytes.copy_from_slice(&req[0..4]);
-                    let length = i32::from_be_bytes(length_bytes);
-                    let length_usize = length as usize;
-
-                    tracing::error!("================================");
-                    tracing::error!("tcp first 16bit data is : {:?}", req[0..2].to_vec());
-                    tracing::error!("tcp length is : {:?}", length_usize);
-                    tracing::error!("================================");
-
                     if n <= 100 {
                         tokio::task::spawn_local(async move {
                             if let Some(redis) = crate::REDIS_CLIENT.get() {

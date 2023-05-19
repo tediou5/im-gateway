@@ -40,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
                                 let Some(dict) = kafka.compress_dict.clone() {
                                     let _old = std::mem::replace(
                                         message,
-                                        compression::compress(message, level, dict.as_slice()).unwrap(),
+                                        compression::compress(message, level, Some(dict.as_slice())).unwrap(),
                                     );
                                 }
 
@@ -68,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
                                 let Some(dict) = kafka.compress_dict.clone() {
                                     let _old = std::mem::replace(
                                         message,
-                                        compression::compress(message, level, dict.as_slice()).unwrap(),
+                                        compression::compress(message, level, Some(dict.as_slice())).unwrap(),
                                     );
                                 }
 
@@ -83,7 +83,7 @@ async fn main() -> anyhow::Result<()> {
                                 let Some(dict) = kafka.compress_dict.clone() {
                                     let _old = std::mem::replace(
                                         message,
-                                        compression::compress(message, level, dict.as_slice()).unwrap(),
+                                        compression::compress(message, level, Some(dict.as_slice())).unwrap(),
                                     );
                                 }
 
@@ -121,12 +121,16 @@ mod compression {
     pub(crate) fn compress(
         source: &Vec<u8>,
         level: i32,
-        dictionary: &[u8],
+        dictionary: Option<&[u8]>,
     ) -> anyhow::Result<Vec<u8>> {
         let len = source.len();
-
         let mut compressed = Vec::<u8>::new();
-        let mut encoder = zstd::Encoder::with_dictionary(&mut compressed, level, dictionary)?;
+
+        let mut encoder = if let Some(dictionary) = dictionary {
+            zstd::Encoder::with_dictionary(&mut compressed, level, dictionary)?
+        } else {
+            zstd::Encoder::new(&mut compressed, level)?
+        };
 
         std::io::copy(&mut source.as_slice(), &mut encoder)?;
         encoder.finish()?;
@@ -162,7 +166,13 @@ mod tests {
         let dictionary = std::fs::read("../dicts/dict").unwrap();
         // let mut encoder = zstd::Encoder::with_dictionary(&mut compressed, 22, &dictionary)?;
 
-        let compressed = crate::compression::compress(&source, 13, dictionary.as_slice()).unwrap();
-        println!("origin len: {len}, compressed len: {}", compressed.len());
+        let compressed_with_dictionary =
+            crate::compression::compress(&source, 13, Some(dictionary.as_slice())).unwrap();
+        let compressed = crate::compression::compress(&source, 13, None).unwrap();
+        println!(
+            "origin len: {len}, compressed len: {}, compressed with dictionary: {}",
+            compressed.len(),
+            compressed_with_dictionary.len()
+        );
     }
 }
