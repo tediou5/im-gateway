@@ -4,7 +4,8 @@
     iter_collect_into,
     iterator_try_collect,
     string_remove_matches,
-    result_option_inspect
+    result_option_inspect,
+    associated_type_bounds
 )]
 
 // #[cfg(all(feature = "tokio", feature = "tokio_uring"))]
@@ -24,6 +25,7 @@ use once_cell::sync::OnceCell;
 
 static AUTH_URL: OnceCell<String> = OnceCell::new();
 static HTTP_CLIENT: OnceCell<reqwest::Client> = OnceCell::new();
+static TCP_WINDOW_SIZE: OnceCell<u8> = OnceCell::new();
 
 static DISPATCHER: OnceCell<tokio::sync::mpsc::Sender<processor::Event>> = OnceCell::new();
 static REDIS_CLIENT: OnceCell<redis::Client> = OnceCell::new();
@@ -61,6 +63,7 @@ async fn init() -> anyhow::Result<()> {
     let client = reqwest::Client::new();
     AUTH_URL.set(config.tcp.auth).unwrap();
     HTTP_CLIENT.set(client).unwrap();
+    TCP_WINDOW_SIZE.set(config.tcp.window_size).unwrap();
 
     let redis_client = redis::Client::new(local_addr.to_string(), config.redis).await?;
     REDIS_CLIENT.set(redis_client).unwrap();

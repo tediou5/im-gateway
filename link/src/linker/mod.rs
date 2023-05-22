@@ -1,6 +1,8 @@
 pub(crate) use message::{Content, Message, MessageCodec};
 
+mod ack_window;
 mod auth;
+mod control_protocol;
 mod message;
 pub(crate) mod tcp;
 pub(crate) mod websocket;

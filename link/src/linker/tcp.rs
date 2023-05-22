@@ -58,8 +58,9 @@ pub(crate) fn process(stream: tokio::net::TcpStream, pin: std::rc::Rc<String>) -
     // let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     // let mut rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
 
-    let mut write = handle(stream, tx.clone(), pin.clone());
+    let (mut write, ack_windows) = handle(stream, tx.clone(), pin.clone());
 
+    let ack_windows_c = ack_windows.clone();
     tokio::task::spawn_local(async move {
         use tokio_stream::StreamExt as _;
 
@@ -69,7 +70,16 @@ pub(crate) fn process(stream: tokio::net::TcpStream, pin: std::rc::Rc<String>) -
                 Event::Close => break,
             };
 
-            tracing::info!("[{pin}] tcp waiting for write message");
+            // FIXME: error when compressed.
+            // Read msg_id marker.
+            let mut msg_id = [0u8; 32];
+            msg_id.copy_from_slice(&message[4..36]);
+
+            if let Err(_) = ack_windows_c.acquire(msg_id, message.clone()).await {
+                break;
+            };
+
+            tracing::trace!("[{pin}] tcp waiting for write message");
 
             if (write.writable().await).is_err() {
                 break;
@@ -89,6 +99,7 @@ pub(crate) fn process(stream: tokio::net::TcpStream, pin: std::rc::Rc<String>) -
                 }
             }
         }
+
         tracing::info!("[{pin}] tcp closed");
         if let Some(redis) = crate::REDIS_CLIENT.get() {
             if let Err(e) = redis.del_heartbeat(pin.to_string()).await {
@@ -105,13 +116,19 @@ pub(crate) fn process(stream: tokio::net::TcpStream, pin: std::rc::Rc<String>) -
 }
 
 /// handle spawn a new thread, read the request through the tcpStream, then send response to channel tx
-fn handle(
+fn handle<T: std::hash::Hash + std::cmp::Ord + std::cmp::PartialOrd>(
     stream: tokio::net::TcpStream,
     tx: Sender,
     pin: std::rc::Rc<String>,
-) -> tokio::net::tcp::OwnedWriteHalf {
+) -> (
+    tokio::net::tcp::OwnedWriteHalf,
+    super::ack_window::AckWindow<T>,
+) {
+    let ack_windows = super::ack_window::AckWindow::new(*crate::TCP_WINDOW_SIZE.get().unwrap());
+
     tracing::trace!("ready to handle tcp request: {:?}", stream.peer_addr());
     let (read, write) = stream.into_split();
+
     tokio::task::spawn_local(async move {
         let mut req = [0; 2048];
         loop {
@@ -131,7 +148,21 @@ fn handle(
                         break;
                     }
 
-                    if n <= 100 {
+                    let control: super::control_protocol::Control = match (req.as_slice())
+                        .try_into()
+                    {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::error!("tcp error: try into control protocol error: {}", e);
+                            break;
+                        }
+                    };
+
+                    if let Some(_) = control.bad_network {
+                        // TODO: handle for bad network quality
+                    };
+
+                    if let Some(_) = control.heartbeat {
                         tokio::task::spawn_local(async move {
                             if let Some(redis) = crate::REDIS_CLIENT.get() {
                                 if let Err(e) = redis.heartbeat(pin.to_string()).await {
@@ -139,28 +170,37 @@ fn handle(
                                 };
                             }
                         });
-                    }
+                    };
 
-                    tracing::info!("tcp read message length: {n}");
-                    let kafka = match crate::KAFKA_CLIENT
-                        .get()
-                        .ok_or(anyhow::anyhow!("kafka is not available"))
-                    {
-                        Ok(kafka) => kafka,
-                        Err(e) => {
-                            tracing::error!("Tcp Error: System Error: {e}");
-                            break;
+                    match control.event {
+                        crate::linker::control_protocol::Event::Ack(acks) => todo!(),
+                        crate::linker::control_protocol::Event::Package(pkg) => {
+                            tracing::info!("tcp read message length: {n}");
+                            let kafka = crate::KAFKA_CLIENT.get().unwrap();
+
+                            tracing::info!("Tcp produce message");
+                            if let Err(e) = kafka
+                                .produce(crate::kafka::VecValue(pkg[0..n].to_vec()))
+                                .await
+                            {
+                                tracing::error!("Tcp Error: Kafka Error: {e}");
+                                break;
+                            };
                         }
-                    };
+                        crate::linker::control_protocol::Event::WeakAck => todo!(),
+                        crate::linker::control_protocol::Event::WeakPackage => todo!(),
+                    }
+                    // is link control protocol
 
-                    tracing::info!("Tcp produce message");
-                    if let Err(e) = kafka
-                        .produce(crate::kafka::VecValue(req[0..n].to_vec()))
-                        .await
-                    {
-                        tracing::error!("Tcp Error: Kafka Error: {e}");
-                        break;
-                    };
+                    // if n <= 100 {
+                    //     tokio::task::spawn_local(async move {
+                    //         if let Some(redis) = crate::REDIS_CLIENT.get() {
+                    //             if let Err(e) = redis.heartbeat(pin.to_string()).await {
+                    //                 tracing::error!("update [{pin}] heartbeat error: {}", e)
+                    //             };
+                    //         }
+                    //     });
+                    // }
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     continue;
@@ -176,5 +216,5 @@ fn handle(
         Ok::<(), anyhow::Error>(())
     });
 
-    write
+    (write, ack_windows)
 }

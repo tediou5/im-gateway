@@ -119,13 +119,14 @@ fn handle(
                         }
                     };
 
-                    let message: super::Message = match serde_json::from_str::<super::Content>(message.as_str()) {
-                        Ok(content) => content.into(),
-                        Err(e) => {
-                            tracing::error!("Websocket Error: Serde Error: {e}");
-                            break;
-                        }
-                    };
+                    let message: super::Message =
+                        match serde_json::from_str::<super::Content>(message.as_str()) {
+                            Ok(content) => content.into(),
+                            Err(e) => {
+                                tracing::error!("Websocket Error: Serde Error: {e}");
+                                break;
+                            }
+                        };
 
                     tracing::info!("websocket produce message: {message:?}");
                     if let Err(e) = kafka.produce(message).await {
