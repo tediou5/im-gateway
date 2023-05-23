@@ -115,7 +115,7 @@ async fn init() -> anyhow::Result<()> {
                         return Err(anyhow::anyhow!("Kafka Consume Error: record value is none"))
                     }
                 };
-                tracing::error!("consume {} len message.", event.len());
+                tracing::debug!("consume {} len message.", event.len());
                 let event = serde_json::from_slice(event.as_slice())?;
                 if (dispatcher.send(event).await).is_err() {
                     return Err(anyhow::anyhow!(

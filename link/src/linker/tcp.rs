@@ -97,10 +97,13 @@ pub(crate) fn process(
     });
 
     tokio::task::spawn_local(async move {
-        let retry_timeout = crate::TCP_CONFIG.get().unwrap().retry_timeout;
+        let retry_config = &crate::TCP_CONFIG.get().unwrap().retry;
+        let max_times = retry_config.max_times;
+        let retry_timeout = retry_config.timeout;
+
         'Loop: loop {
             let retry = ack_windows.try_again().await;
-            let timeout = match get_retry_timeout(retry.times.into(), retry_timeout) {
+            let timeout = match get_retry_timeout(retry.times.into(), retry_timeout, max_times) {
                 Ok(timeout) => timeout,
                 Err(_) => break,
             };
@@ -170,7 +173,7 @@ fn handle(
     super::ack_window::AckWindow<Vec<u8>>,
 ) {
     let ack_windows =
-        super::ack_window::AckWindow::new(crate::TCP_CONFIG.get().unwrap().window_size);
+        super::ack_window::AckWindow::new(crate::TCP_CONFIG.get().unwrap().retry.window_size);
 
     tracing::trace!("ready to handle tcp request: {:?}", stream.peer_addr());
     let (read, write) = stream.into_split();
@@ -258,10 +261,10 @@ fn handle(
     (write, ack_windows)
 }
 
-fn get_retry_timeout(retry_times: u64, timeout: u64) -> anyhow::Result<u64> {
+fn get_retry_timeout(retry_times: u64, timeout: u64, max: u8) -> anyhow::Result<u64> {
     let times: u64 = match retry_times {
         less_than_three if less_than_three < 3 => less_than_three + 1,
-        other if other < 10 => 4,
+        other if other < max.into() => 4,
         _ => {
             tracing::error!("retry to many times, close connection");
             return Err(anyhow::anyhow!("retry to many times, close connection"));
@@ -274,17 +277,17 @@ fn get_retry_timeout(retry_times: u64, timeout: u64) -> anyhow::Result<u64> {
 mod test {
     #[test]
     fn get_retry_timeout() {
-        let timeout = super::get_retry_timeout(0, 3).unwrap();
+        let timeout = super::get_retry_timeout(0, 3, 10).unwrap();
         assert_eq!(timeout, 3);
-        let timeout = super::get_retry_timeout(1, 3).unwrap();
+        let timeout = super::get_retry_timeout(1, 3, 10).unwrap();
         assert_eq!(timeout, 6);
-        let timeout = super::get_retry_timeout(4, 3).unwrap();
+        let timeout = super::get_retry_timeout(4, 3, 10).unwrap();
         assert_eq!(timeout, 12);
-        let timeout = super::get_retry_timeout(8, 3).unwrap();
+        let timeout = super::get_retry_timeout(8, 3, 10).unwrap();
         assert_eq!(timeout, 12);
-        let timeout = super::get_retry_timeout(10, 3);
+        let timeout = super::get_retry_timeout(10, 3, 10);
         assert!(timeout.is_err());
-        let timeout = super::get_retry_timeout(13, 3);
+        let timeout = super::get_retry_timeout(13, 3, 10);
         assert!(timeout.is_err());
     }
 }

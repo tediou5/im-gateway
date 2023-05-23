@@ -21,9 +21,15 @@ impl Config {
 pub(crate) struct Tcp {
     pub(crate) port: u16,
     pub(crate) auth: String,
-    pub(crate) window_size: u8,
+    pub(crate) retry: Retry,
+}
+
+#[derive(serde_derive::Deserialize, Debug, Clone)]
+pub(crate) struct Retry {
     // millis
-    pub(crate) retry_timeout: u64,
+    pub(crate) timeout: u64,
+    pub(crate) max_times: u8,
+    pub(crate) window_size: u8,
 }
 
 #[derive(serde_derive::Deserialize, Debug, Clone)]
