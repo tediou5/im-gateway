@@ -1,10 +1,8 @@
 pub(crate) type Sender = local_sync::mpsc::unbounded::Tx<Event>;
-// pub(crate) type Sender = tokio::sync::mpsc::UnboundedSender<Event>;
 
 #[derive(Debug)]
 pub(crate) enum Event {
     WriteBatch(std::rc::Rc<String>),
-    // WriteBatch(std::sync::Arc<String>),
     Close,
 }
 
@@ -23,28 +21,30 @@ pub(crate) async fn websocket(
         };
 
         let _ = content
-            .handle_auth(async move |platform, message| {
-                let content = message.content;
-                let content = serde_json::to_string(&content)?;
-                tracing::info!("platform connection: {platform:?} with baseinfo:\n{content:?}");
-                if let Err(e) = socket.send(axum::extract::ws::Message::Text(content)).await {
-                    return Err(anyhow::anyhow!("failed to write to socket; err = {e}"));
-                }
-                match platform.as_str() {
-                    "web" => Ok(super::Platform::Web(socket)),
-                    _ => Err(anyhow::anyhow!("unexpected platform")),
-                }
+            .handle_auth(async move |platform, message| match platform.as_str() {
+                "web" => Ok(super::Login {
+                    platform: super::Platform::Web(socket),
+                    auth_message: message,
+                }),
+                _ => Err(anyhow::anyhow!("unexpected platform")),
             })
             .await;
     })
 }
 
-pub(crate) fn process(socket: axum::extract::ws::WebSocket, pin: std::rc::Rc<String>) -> Sender {
+pub(crate) fn process(
+    socket: axum::extract::ws::WebSocket,
+    pin: std::rc::Rc<String>,
+    auth_message: super::Message,
+) -> Sender {
     let (tx, rx) = local_sync::mpsc::unbounded::channel::<Event>();
     let mut rx = local_sync::stream_wrappers::unbounded::ReceiverStream::new(rx);
-    // let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    // let mut rx = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
     let mut write = handle(socket, tx.clone(), pin.clone());
+
+    let auth_message = auth_message.content;
+    // FIXME: maybe panic if auth_message serialize  error.
+    let auth_message = serde_json::to_string(&auth_message).unwrap();
+    let _ = tx.send(Event::WriteBatch(auth_message.into()));
 
     tokio::task::spawn_local(async move {
         use futures::SinkExt as _;

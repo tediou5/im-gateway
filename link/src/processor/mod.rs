@@ -3,14 +3,14 @@ use crate::conhash;
 pub(crate) mod chat;
 pub(crate) mod event_loop;
 
-#[derive(Debug, serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 #[serde(untagged)]
 pub(crate) enum Event {
     #[serde(skip)]
     Login(
         String,                      /* pin */
         Vec<std::sync::Arc<String>>, /* chats */
-        crate::linker::Platform,
+        crate::linker::Login,
     ),
     Private(
         std::collections::HashSet<String>, /* recvs */

@@ -7,6 +7,11 @@ mod message;
 pub(crate) mod tcp;
 pub(crate) mod websocket;
 
+pub(crate) struct Login {
+    platform: Platform,
+    auth_message: crate::linker::Message,
+}
+
 #[derive(Debug)]
 pub(crate) enum Platform {
     App(tokio::net::TcpStream),
@@ -62,24 +67,28 @@ impl User {
     }
 
     // TODO: handle socket stream here
-    pub(crate) fn update(&self, platform: Platform) {
+    pub(crate) fn update(&self, login: Login) {
+        let Login {
+            platform,
+            auth_message,
+        } = login;
         match platform {
             Platform::App(stream) => {
-                let sender = tcp::process(stream, self.pin.clone());
+                let sender = tcp::process(stream, self.pin.clone(), auth_message);
                 if let Some(old) = self.app.replace(Some(sender)) {
                     tracing::error!("{}: remove old > app < connection", self.pin.as_str());
                     let _ = old.send(tcp::Event::Close);
                 };
             }
             Platform::Pc(stream) => {
-                let sender = tcp::process(stream, self.pin.clone());
+                let sender = tcp::process(stream, self.pin.clone(), auth_message);
                 if let Some(old) = self.pc.replace(Some(sender)) {
                     tracing::error!("{}: remove old > pc < connection", self.pin.as_str());
                     let _ = old.send(tcp::Event::Close);
                 };
             }
             Platform::Web(socket) => {
-                let sender = websocket::process(socket, self.pin.clone());
+                let sender = websocket::process(socket, self.pin.clone(), auth_message);
                 if let Some(old) = self.web.replace(Some(sender)) {
                     tracing::error!("{}: remove old > web < connection", self.pin.as_str());
                     let _ = old.send(websocket::Event::Close);
@@ -92,8 +101,6 @@ impl User {
         &self,
         message_bytes: &std::rc::Rc<Vec<u8>>,
         content: &mut Option<std::rc::Rc<String>>,
-        // message_bytes: &std::sync::Arc<Vec<u8>>,
-        // content: &mut Option<std::sync::Arc<String>>,
     ) -> anyhow::Result<()> {
         let mut flag = 0;
 
@@ -151,24 +158,4 @@ impl User {
             // TODO:
         }
     }
-
-    // pub(crate) fn flush(&mut self) -> anyhow::Result<()> {
-    //     if let Some(sender) = self.app.as_ref() &&
-    //     let Err(_) = sender.send(tcp::Event::Flush) {
-    //         self.app = None;
-    //     };
-
-    //     if let Some(sender) = self.pc.as_ref() &&
-    //     let Err(_) = sender.send(tcp::Event::Flush) {
-    //         self.pc = None;
-    //     };
-
-    //     if let None = self.app &&
-    //     let None = self.web &&
-    //     let None = self.pc {
-    //         Err(anyhow::anyhow!("user all links has been disconnected"))
-    //     } else {
-    //         Ok(())
-    //     }
-    // }
 }

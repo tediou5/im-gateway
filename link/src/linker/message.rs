@@ -54,7 +54,7 @@ impl Content {
     pub(super) async fn handle_auth<F, U>(self, platform_op: F) -> anyhow::Result<()>
     where
         F: FnOnce(String, Message) -> U,
-        U: std::future::Future<Output = anyhow::Result<super::Platform>>,
+        U: std::future::Future<Output = anyhow::Result<super::Login>>,
     {
         if let Content::Connect {
             app_id,

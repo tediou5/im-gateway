@@ -3,7 +3,6 @@ pub(crate) type Sender = local_sync::mpsc::unbounded::Tx<Event>;
 #[derive(Debug, Clone)]
 pub(crate) enum Event {
     WriteBatch(std::rc::Rc<Vec<u8>>),
-    // WriteBatch(std::sync::Arc<Vec<u8>>),
     Close,
 }
 
@@ -11,7 +10,7 @@ pub(crate) enum Event {
 pub(crate) async fn auth(mut stream: tokio::net::TcpStream) -> anyhow::Result<()> {
     crate::axum_handler::LINK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::io::AsyncReadExt;
     let mut req = [0; 2048];
 
     let auth = match stream.read(&mut req).await {
@@ -32,20 +31,27 @@ pub(crate) async fn auth(mut stream: tokio::net::TcpStream) -> anyhow::Result<()
         .content
         .handle_auth(async move |platform, message| {
             tracing::info!("platform connection: {platform:?} with baseinfo:\n{message:?}");
-            let message: Vec<u8> = (&message).into();
-            if let Err(e) = stream.write_all(message.as_slice()).await {
-                return Err(anyhow::anyhow!("failed to write to socket; err = {e}"));
-            }
+
             match platform.as_str() {
-                "app" => Ok(super::Platform::App(stream)),
-                "pc" => Ok(super::Platform::Pc(stream)),
+                "app" => Ok(super::Login {
+                    platform: super::Platform::App(stream),
+                    auth_message: message,
+                }),
+                "pc" => Ok(super::Login {
+                    platform: super::Platform::Pc(stream),
+                    auth_message: message,
+                }),
                 _ => Err(anyhow::anyhow!("unexpected platform")),
             }
         })
         .await
 }
 
-pub(crate) fn process(stream: tokio::net::TcpStream, pin: std::rc::Rc<String>) -> Sender {
+pub(crate) fn process(
+    stream: tokio::net::TcpStream,
+    pin: std::rc::Rc<String>,
+    auth_message: super::Message,
+) -> Sender {
     tracing::info!(
         "[{pin}] ready to process tcp message: {:?}",
         stream.peer_addr()
@@ -59,6 +65,10 @@ pub(crate) fn process(stream: tokio::net::TcpStream, pin: std::rc::Rc<String>) -
     let mut tcp_sender = local_sync::stream_wrappers::unbounded::ReceiverStream::new(tcp_sender);
 
     let (mut write, ack_windows) = handle(stream, tx.clone(), pin.clone());
+
+    // send auth message first, auth message alse need ack.
+    let auth_message: Vec<u8> = (&auth_message).into();
+    let _ = tx.send(Event::WriteBatch(auth_message.into()));
 
     let tcp_collect_c = tcp_collect.clone();
     let ack_windows_c = ack_windows.clone();

@@ -53,7 +53,7 @@ impl Response {
     ) -> anyhow::Result<()>
     where
         F: FnOnce(String, super::Message) -> U,
-        U: std::future::Future<Output = anyhow::Result<super::Platform>>,
+        U: std::future::Future<Output = anyhow::Result<super::Login>>,
     {
         tracing::trace!("auth body: {:#?}", self);
 

@@ -2,7 +2,8 @@ pub(super) enum Event {
     Login(
         String,                      /* pin */
         Vec<std::sync::Arc<String>>, /* chats */
-        crate::linker::Platform,
+        crate::linker::Login,
+        // crate::linker::Platform,
     ),
     Private(String /* recv */, std::sync::Arc<Vec<u8>>),
     Group(
@@ -92,7 +93,7 @@ async fn process(
 ) -> anyhow::Result<()> {
     tracing::info!(">>>>>>>>> {name} <<<<<<<<<");
     match event {
-        Event::Login(pin, chat_list, platform) => {
+        Event::Login(pin, chat_list, login) => {
             tracing::error!("{pin} login");
             let pin = std::rc::Rc::new(pin);
             if let Some(redis) = crate::REDIS_CLIENT.get() {
@@ -104,7 +105,7 @@ async fn process(
                 .entry(pin)
                 .or_insert_with_key(|pin| crate::linker::User::from_pin(pin.clone()));
 
-            user_connection.update(platform);
+            user_connection.update(login);
 
             let mut regiest_chats = Vec::new();
 
@@ -167,7 +168,6 @@ async fn process(
                         };
                     };
                 }
-                tracing::info!("-------------------------------------");
             }
         }
         Event::Chat(crate::processor::chat::Action::Join(chat, members)) => {
@@ -206,7 +206,7 @@ async fn process(
             };
         }
     }
-    tracing::info!("--------- end ---------");
+    tracing::info!("--------- end {name} ---------");
     Ok(())
 }
 
