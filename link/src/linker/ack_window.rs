@@ -18,16 +18,33 @@ impl std::fmt::Debug for Ack {
     }
 }
 
-pub(super) struct AckWindow<T: std::hash::Hash + std::cmp::Ord + std::cmp::PartialOrd + Clone> {
+// #[derive(Debug)]
+pub(super) struct AckWindow<T>
+where
+    T: std::hash::Hash + std::cmp::Ord + std::cmp::PartialOrd + Clone + std::fmt::Debug,
+{
     retry_times: std::rc::Rc<std::sync::atomic::AtomicU8>,
     semaphore: std::rc::Rc<local_sync::semaphore::Semaphore>,
     ack_list: std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<T, Ack>>>,
     waker: std::rc::Rc<std::cell::Cell<Option<std::task::Waker>>>,
 }
 
+impl<T> std::fmt::Debug for AckWindow<T>
+where
+    T: std::hash::Hash + std::cmp::Ord + std::cmp::PartialOrd + Clone + std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AckWindow")
+            .field("retry_times", &self.retry_times)
+            .field("semaphore", &self.semaphore)
+            .field("ack_list", &self.ack_list)
+            .finish()
+    }
+}
+
 impl<T> Clone for AckWindow<T>
 where
-    T: std::hash::Hash + std::cmp::Ord + std::cmp::PartialOrd + Clone,
+    T: std::hash::Hash + std::cmp::Ord + std::cmp::PartialOrd + Clone + std::fmt::Debug,
 {
     fn clone(&self) -> Self {
         Self {
@@ -41,7 +58,7 @@ where
 
 impl<T> AckWindow<T>
 where
-    T: std::hash::Hash + std::cmp::Ord + std::cmp::PartialOrd + Clone,
+    T: std::hash::Hash + std::cmp::Ord + std::cmp::PartialOrd + Clone + std::fmt::Debug,
 {
     pub(super) fn new(permits: u8) -> Self {
         let semaphore = local_sync::semaphore::Semaphore::new(permits.into());
@@ -69,7 +86,7 @@ where
     ) -> anyhow::Result<()> {
         let permit = (self.semaphore.clone()).acquire_owned().await?;
         let ack = Ack { permit, message };
-
+        tracing::info!("AckWindow: acquire trace_id: {trace_id:?}");
         // if acquire a new ack & waker is set & never retry before, wake it.
         if let None = self.ack_list.borrow_mut().insert(trace_id, ack) &&
         let Some(w) = self.waker.replace(None) {
@@ -80,6 +97,7 @@ where
 
     pub(super) fn ack(&self, trace_id: T) -> anyhow::Result<()> {
         if self.ack_list.borrow_mut().remove(&trace_id).is_some() {
+            tracing::info!("AckWindow: ack trace_id: {trace_id:?}");
             self.retry_times
                 .swap(0, std::sync::atomic::Ordering::SeqCst);
         };
@@ -93,6 +111,7 @@ where
     pub(super) fn poll_try_again(&self, cx: &mut std::task::Context<'_>) -> std::task::Poll<Retry> {
         let ack_list = self.ack_list.borrow();
         if !ack_list.is_empty() {
+            tracing::info!("AckWindow: retry: {self:?}");
             let times = self
                 .retry_times
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
