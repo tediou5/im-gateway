@@ -1,7 +1,7 @@
+use crate::mpsc::unbounded::Rx;
 use futures_core::Stream;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use crate::mpsc::unbounded::Rx;
 
 /// A wrapper around [`tokio::sync::mpsc::Receiver`] that implements [`Stream`].
 ///

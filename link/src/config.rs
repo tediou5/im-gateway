@@ -22,6 +22,8 @@ pub(crate) struct Tcp {
     pub(crate) port: u16,
     pub(crate) auth: String,
     pub(crate) window_size: u8,
+    // millis
+    pub(crate) retry_timeout: u64,
 }
 
 #[derive(serde_derive::Deserialize, Debug, Clone)]

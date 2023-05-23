@@ -192,6 +192,26 @@ where
         Poll::Pending
     }
 
+    pub(crate) fn recv_many(
+        &mut self,
+        number: usize,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Vec<T>>> {
+        let mut queue = self.chan.queue.borrow_mut();
+        if !queue.is_empty() {
+            let len = queue.len();
+            let len = if number < len { number } else { len };
+            let vals = (0..len).map(|_| unsafe { queue.pop_unchecked() }).collect();
+            self.chan.semaphore.add_permits(len);
+            return Poll::Ready(Some(vals));
+        }
+        if self.chan.tx_count.get() == 0 {
+            return Poll::Ready(None);
+        }
+        self.chan.rx_waker.replace(Some(cx.waker().clone()));
+        Poll::Pending
+    }
+
     pub(crate) fn close(&mut self) {
         self.chan.semaphore.close();
     }

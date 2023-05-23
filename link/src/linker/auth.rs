@@ -1,9 +1,11 @@
 use super::Content;
 
 pub(super) async fn auth(app_id: &str, token: &str, platform: &str) -> anyhow::Result<Response> {
-    let auth_url = crate::AUTH_URL
+    let auth_url = crate::TCP_CONFIG
         .get()
-        .ok_or(anyhow::anyhow!("Config Error: auth_url not exist"))?;
+        .ok_or(anyhow::anyhow!("Config Error: auth_url not exist"))?
+        .auth
+        .as_str();
     let http = crate::HTTP_CLIENT
         .get()
         .ok_or(anyhow::anyhow!("System Error: http client not exist"))?;

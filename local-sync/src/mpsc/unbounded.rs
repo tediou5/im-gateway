@@ -50,6 +50,14 @@ impl<T> Rx<T> {
         self.0.recv(cx)
     }
 
+    pub async fn recv_many(&mut self, number: usize) -> Option<Vec<T>> {
+        poll_fn(|cx| self.poll_recv_many(number, cx)).await
+    }
+
+    pub fn poll_recv_many(&mut self, number: usize, cx: &mut Context<'_>) -> Poll<Option<Vec<T>>> {
+        self.0.recv_many(number, cx)
+    }
+
     pub fn try_recv(&mut self) -> Result<T, TryRecvError> {
         self.0.try_recv()
     }
