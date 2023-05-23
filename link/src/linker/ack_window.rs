@@ -1,3 +1,4 @@
+#[derive(Debug, PartialEq)]
 pub(super) struct Retry {
     pub(super) times: u8,
     pub(super) messages: Vec<std::rc::Rc<Vec<u8>>>,
@@ -69,7 +70,7 @@ where
         let permit = (self.semaphore.clone()).acquire_owned().await?;
         let ack = Ack { permit, message };
 
-        // if acquire a new ack & waker is set , wake it.
+        // if acquire a new ack & waker is set & never retry before, wake it.
         if let None = self.ack_list.borrow_mut().insert(trace_id, ack) &&
         let Some(w) = self.waker.replace(None) {
             w.wake();
@@ -108,7 +109,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use std::println;
+    use super::Retry;
 
     #[test]
     fn wait_for_acquire() {
@@ -130,6 +131,64 @@ mod test {
 
             ack_c.acquire(2, vec![0].into()).await.unwrap();
             println!("ack window: acquire trace: 2")
+        });
+        rt.block_on(local_set);
+    }
+
+    #[test]
+    fn wait_for_retry_and_reset() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let local = tokio::task::LocalSet::new();
+        let local_set = local.run_until(async {
+            let ack_list = super::AckWindow::new(1);
+            let ack_c = ack_list.clone();
+            tokio::task::spawn_local(async move {
+                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                ack_c.acquire(1, vec![0].into()).await.unwrap();
+                println!("ack window: ack trace: 1");
+            });
+
+            let retry1 = ack_list.try_again().await;
+            println!("ack window: retry 1: {retry1:?}");
+            assert_eq!(
+                retry1,
+                Retry {
+                    times: 0,
+                    messages: vec![vec![0].into()]
+                }
+            );
+
+            let retry2 = ack_list.try_again().await;
+            println!("ack window: retry 2: {retry2:?}");
+            assert_eq!(
+                retry2,
+                Retry {
+                    times: 1,
+                    messages: vec![vec![0].into()]
+                }
+            );
+
+            let ack_c = ack_list.clone();
+            tokio::task::spawn_local(async move {
+                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                ack_c.acquire(2, vec![0].into()).await.unwrap();
+                println!("ack window: ack trace: 2");
+            });
+
+            ack_list.ack(1).unwrap();
+            let retry3 = ack_list.try_again().await;
+            println!("ack window: retry 3: {retry3:?}");
+            assert_eq!(
+                retry3,
+                Retry {
+                    times: 0,
+                    messages: vec![vec![0].into()]
+                }
+            );
         });
         rt.block_on(local_set);
     }

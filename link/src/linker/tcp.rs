@@ -89,12 +89,11 @@ pub(crate) fn process(stream: tokio::net::TcpStream, pin: std::rc::Rc<String>) -
         let retry_timeout = crate::TCP_CONFIG.get().unwrap().retry_timeout;
         'Loop: loop {
             let retry = ack_windows.try_again().await;
-            let times: u64 = match retry.times {
-                0 | 1 => 1,
-                2 => 2,
-                _ => 4,
+            let timeout = match get_retry_timeout(retry.times.into(), retry_timeout) {
+                Ok(timeout) => timeout,
+                Err(_) => break,
             };
-            tokio::time::sleep(tokio::time::Duration::from_millis(times * retry_timeout)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(timeout)).await;
             for message in retry.messages.iter() {
                 if let Err(e) = tcp_collect.send(Event::WriteBatch(message.clone())) {
                     tracing::error!("tcp error: send retry message error: {e:?}");
@@ -246,4 +245,35 @@ fn handle(
     });
 
     (write, ack_windows)
+}
+
+fn get_retry_timeout(retry_times: u64, timeout: u64) -> anyhow::Result<u64> {
+    let times: u64 = match retry_times {
+        less_than_three if less_than_three < 3 => less_than_three + 1,
+        other if other < 10 => 4,
+        _ => {
+            tracing::error!("retry to many times, close connection");
+            return Err(anyhow::anyhow!("retry to many times, close connection"));
+        }
+    };
+    Ok(times * timeout)
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn get_retry_timeout() {
+        let timeout = super::get_retry_timeout(0, 3).unwrap();
+        assert_eq!(timeout, 3);
+        let timeout = super::get_retry_timeout(1, 3).unwrap();
+        assert_eq!(timeout, 6);
+        let timeout = super::get_retry_timeout(4, 3).unwrap();
+        assert_eq!(timeout, 12);
+        let timeout = super::get_retry_timeout(8, 3).unwrap();
+        assert_eq!(timeout, 12);
+        let timeout = super::get_retry_timeout(10, 3);
+        assert!(timeout.is_err());
+        let timeout = super::get_retry_timeout(13, 3);
+        assert!(timeout.is_err());
+    }
 }
