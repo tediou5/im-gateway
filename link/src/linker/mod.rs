@@ -24,7 +24,7 @@ pub(crate) struct User {
 
 impl std::hash::Hash for User {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.pin.hash(state);
+        self.pin.as_str().hash(state);
     }
 }
 

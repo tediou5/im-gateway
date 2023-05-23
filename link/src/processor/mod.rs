@@ -125,6 +125,7 @@ async fn dispatch(
             }
         }
         Event::Chat(action) => {
+            tracing::info!("send group action {action:?}");
             for event_loop in event_loops {
                 if let Err(e) = event_loop
                     .mailbox

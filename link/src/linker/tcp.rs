@@ -66,10 +66,10 @@ pub(crate) fn process(stream: tokio::net::TcpStream, pin: std::rc::Rc<String>) -
         use tokio_stream::StreamExt as _;
 
         while let Some(event) = rx.next().await {
-            let _ = tcp_collect_c.send(event.clone());
             let message = match event {
                 Event::WriteBatch(message) => message,
                 Event::Close => {
+                    let _ = tcp_collect_c.send(event.clone());
                     return;
                 }
             };
@@ -82,6 +82,7 @@ pub(crate) fn process(stream: tokio::net::TcpStream, pin: std::rc::Rc<String>) -
                 tracing::error!("acquire ack windows failed: {e}");
                 return;
             };
+            let _ = tcp_collect_c.send(Event::WriteBatch(message));
         }
     });
 

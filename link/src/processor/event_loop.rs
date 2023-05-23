@@ -34,7 +34,9 @@ pub(super) fn run(core_id: core_affinity::CoreId) -> EventLoop {
     let mut collect_rx = tokio_stream::wrappers::ReceiverStream::new(collect_rx);
 
     let id = core_id.id;
+    let name = format!("processor-event-loop-{id}");
 
+    let name_c = name.clone();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -62,7 +64,7 @@ pub(super) fn run(core_id: core_affinity::CoreId) -> EventLoop {
                 > = ahash::AHashMap::new();
 
                 while let Some(event) = collect_rx.next().await {
-                    if let Err(e) = process(&mut users, &mut chats, event).await {
+                    if let Err(e) = process(name_c.as_str(), &mut users, &mut chats, event).await {
                         // TODO: handle error
                         tracing::info!("preocess event error: {e}");
                     }
@@ -77,16 +79,18 @@ pub(super) fn run(core_id: core_affinity::CoreId) -> EventLoop {
     });
 
     EventLoop {
-        name: format!("processor-event-loop-{id}").into(),
+        name: name.into(),
         mailbox: collect_tx,
     }
 }
 
 async fn process(
+    name: &str,
     users: &mut ahash::AHashMap<std::rc::Rc<String>, crate::linker::User>,
     chats: &mut ahash::AHashMap<String, std::collections::HashSet<crate::linker::User>>,
     event: Event,
 ) -> anyhow::Result<()> {
+    tracing::info!(">>>>>>>>> {name} <<<<<<<<<");
     match event {
         Event::Login(pin, chat_list, platform) => {
             tracing::error!("{pin} login");
@@ -142,7 +146,7 @@ async fn process(
                 let mut content = None;
                 let message = std::rc::Rc::new(message.as_ref().clone());
 
-                tracing::info!("send group: <{chat}>: {} message", online.len());
+                tracing::info!("send group: <{chat}>: {} message", recv_list.len());
 
                 for one in recv_list.iter() {
                     if one.send(&message, &mut content).is_err() {
@@ -155,10 +159,15 @@ async fn process(
         }
         Event::Chat(crate::processor::chat::Action::Leave(chat, members)) => {
             if let Some(online) = chats.get_mut(&chat.to_string()) {
-                for member in members {
-                    let user = crate::linker::User::from_pin(member.into());
-                    online.remove(&user);
+                tracing::info!("try leave {members:?} from <{chat}>: {online:?}");
+                for member in members.iter() {
+                    if let Some(user) = users.get(member) {
+                        if online.remove(user) {
+                            tracing::debug!("leave {member} from <{chat}>")
+                        };
+                    };
                 }
+                tracing::info!("-------------------------------------");
             }
         }
         Event::Chat(crate::processor::chat::Action::Join(chat, members)) => {
@@ -197,7 +206,7 @@ async fn process(
             };
         }
     }
-
+    tracing::info!("--------- end ---------");
     Ok(())
 }
 
