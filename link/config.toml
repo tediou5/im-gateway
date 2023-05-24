@@ -1,10 +1,10 @@
 [tcp]
-auth = "http://192.168.0.92:10804/v1/rest/merchant/user/parseToken"
+auth = "http://192.168.0.231:10804/v1/rest/merchant/user/parseToken"
 port = 10001
 
 [tcp.retry]
-max_times = 10
-timeout = 3000
+max_times = 5
+timeout = 5000
 window_size = 10
 
 [http]
@@ -17,7 +17,7 @@ addrs = ["192.168.0.93:9092", "192.168.0.93:9093", "192.168.0.93:9094"]
 
 [kafka.producer]
 business_partition = 0
-business_topic = "im-session-link"
+business_topic = "im-session-link-local"
 linger = 10
 max_batch_size = 52_428_800
 

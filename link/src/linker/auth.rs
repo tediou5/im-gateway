@@ -50,7 +50,7 @@ impl Response {
         platform_op: F,
     ) -> anyhow::Result<()>
     where
-        F: FnOnce(String, super::Message) -> U,
+        F: FnOnce(String, super::Content) -> U,
         U: std::future::Future<Output = anyhow::Result<super::Login>>,
     {
         tracing::trace!("auth body: {:#?}", self);
@@ -66,14 +66,13 @@ impl Response {
 
             let content =
             crate::linker::Content::new_base_info_content(app_id.as_str(), id.as_str(), timestamp, &base_info);
-            let message = (id, content).into();
 
             let chats = chats.into_iter().map(|chat| chat.into()).collect();
             // redis_client.regist(&chats).await?;
             match dispatcher.send(crate::processor::Event::Login(
                 base_info.pin.clone(),
                 chats,
-                platform_op(platform, message).await?,
+                platform_op(platform, content).await?,
             )).await {
                 Ok(_) => Ok(()),
                 Err(_) => Err(anyhow::anyhow!("System Error: login failed")),

@@ -63,9 +63,22 @@ pub(super) fn run(core_id: core_affinity::CoreId) -> EventLoop {
                     String,
                     std::collections::HashSet<crate::linker::User>,
                 > = ahash::AHashMap::new();
+                let mut id_worker = crate::snowflake::SnowflakeIdWorkerInner::new(
+                    id as u128 % crate::snowflake::MAX_WORKER_ID,
+                    1,
+                )
+                .unwrap();
 
                 while let Some(event) = collect_rx.next().await {
-                    if let Err(e) = process(name_c.as_str(), &mut users, &mut chats, event).await {
+                    if let Err(e) = process(
+                        name_c.as_str(),
+                        &mut users,
+                        &mut chats,
+                        &mut id_worker,
+                        event,
+                    )
+                    .await
+                    {
                         // TODO: handle error
                         tracing::info!("preocess event error: {e}");
                     }
@@ -89,9 +102,10 @@ async fn process(
     name: &str,
     users: &mut ahash::AHashMap<std::rc::Rc<String>, crate::linker::User>,
     chats: &mut ahash::AHashMap<String, std::collections::HashSet<crate::linker::User>>,
+    id_worker: &mut crate::snowflake::SnowflakeIdWorkerInner,
     event: Event,
 ) -> anyhow::Result<()> {
-    tracing::info!(">>>>>>>>> {name} <<<<<<<<<");
+    tracing::debug!(">>>>>>>>> {name} <<<<<<<<<");
     match event {
         Event::Login(pin, chat_list, login) => {
             tracing::error!("{pin} login");
@@ -123,12 +137,12 @@ async fn process(
             });
         }
         Event::Private(pin, message) => {
-            let mut content = None;
-            let message = std::rc::Rc::new(message.as_ref().clone());
-
             if let Some(sender) = users.get_mut(&pin) {
                 tracing::info!("send user: {pin}");
-                if sender.send(&message, &mut content).is_err() {
+                let (trace_id, message) =
+                    crate::linker::Content::pack_message(&message, id_worker)?;
+                let message = std::rc::Rc::new(message);
+                if sender.send(trace_id, &message).is_err() {
                     tracing::info!("remove user: {pin}");
                     users.remove(&pin);
                 };
@@ -144,13 +158,14 @@ async fn process(
                 let recv_list: std::collections::HashSet<crate::linker::User> =
                     online.difference(&exclusions).map(Clone::clone).collect();
 
-                let mut content = None;
-                let message = std::rc::Rc::new(message.as_ref().clone());
+                let (trace_id, message) =
+                    crate::linker::Content::pack_message(&message, id_worker)?;
+                let message = std::rc::Rc::new(message);
 
                 tracing::info!("send group: <{chat}>: {} message", recv_list.len());
 
                 for one in recv_list.iter() {
-                    if one.send(&message, &mut content).is_err() {
+                    if one.send(trace_id, &message).is_err() {
                         users.remove(one.pin.as_ref());
                         online.remove(one);
                         one.close()
@@ -190,13 +205,14 @@ async fn process(
             tracing::info!("send notice to [{chat}]");
             if let Some(online) = chats.get_mut(&chat.to_string()) {
                 tracing::info!("[{chat}] with online members: {online:?}");
-                let mut content = None;
+                let (trace_id, message) =
+                    crate::linker::Content::pack_message(&message, id_worker)?;
                 let message = std::rc::Rc::new(message);
 
                 tracing::info!("send group [{}] message", online.len());
 
                 online.retain(|one| {
-                    one.send(&message, &mut content)
+                    one.send(trace_id, &message)
                         .inspect_err(|_e| {
                             users.remove(one.pin.as_ref());
                             one.close()
@@ -206,7 +222,7 @@ async fn process(
             };
         }
     }
-    tracing::info!("--------- end {name} ---------");
+    tracing::debug!("--------- end {name} ---------");
     Ok(())
 }
 

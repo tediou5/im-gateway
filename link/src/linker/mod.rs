@@ -1,4 +1,4 @@
-pub(crate) use protocol::message::{Content, Message, MessageCodec};
+pub(crate) use protocol::content::Content;
 
 mod ack_window;
 mod auth;
@@ -8,7 +8,7 @@ pub(crate) mod websocket;
 
 pub(crate) struct Login {
     platform: Platform,
-    auth_message: crate::linker::Message,
+    auth_message: crate::linker::Content,
 }
 
 #[derive(Debug)]
@@ -98,41 +98,33 @@ impl User {
 
     pub(crate) fn send(
         &self,
+        trace_id: u64,
         message_bytes: &std::rc::Rc<Vec<u8>>,
-        content: &mut Option<std::rc::Rc<String>>,
     ) -> anyhow::Result<()> {
         let mut flag = 0;
 
         let mut app = self.app.borrow_mut();
         if let Some(sender) = app.as_ref().inspect(|_|flag += 1) &&
-        let Err(_) = sender.send(tcp::Event::WriteBatch(message_bytes.clone())) {
-            tracing::error!("{}: tcp send failed", self.pin);
+        let Err(_) = sender.send(tcp::Event::WriteBatch(trace_id, message_bytes.clone())) {
+            tracing::error!("{}: app send failed", self.pin);
             app.take();
             flag -= 1;
         };
 
         let mut pc = self.pc.borrow_mut();
         if let Some(sender) = pc.as_ref().inspect(|_|flag += 1) &&
-        let Err(_) = sender.send(tcp::Event::WriteBatch(message_bytes.clone())) {
-            tracing::error!("{}: tcp send failed", self.pin);
+        let Err(_) = sender.send(tcp::Event::WriteBatch(trace_id, message_bytes.clone())) {
+            tracing::error!("{}: pc send failed", self.pin);
             pc.take();
             flag -= 1;
         };
 
         let mut web = self.web.borrow_mut();
-        if let Some(sender) = web.as_ref().inspect(|_| flag += 1) {
-            if content.is_none() {
-                *content = Some(std::rc::Rc::new(
-                    String::from_utf8_lossy(&message_bytes.as_ref()[44..]).to_string(),
-                ))
-            }
-
-            if let Some(content) = content &&
-            let Err(_) = sender.send(websocket::Event::WriteBatch(content.clone())) {
-                tracing::error!("{}: websocket send failed", self.pin);
-                web.take();
-                flag -= 1;
-            }
+        if let Some(sender) = web.as_ref().inspect(|_|flag += 1) &&
+        let Err(_) = sender.send(websocket::Event::WriteBatch(trace_id, message_bytes.clone())) {
+            tracing::error!("{}: web send failed", self.pin);
+            web.take();
+            flag -= 1;
         };
 
         if flag == 0 {

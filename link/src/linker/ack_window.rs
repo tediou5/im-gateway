@@ -19,7 +19,7 @@ impl std::fmt::Debug for Ack {
 }
 
 // #[derive(Debug)]
-pub(super) struct AckWindow<T>
+pub(crate) struct AckWindow<T>
 where
     T: std::hash::Hash + std::cmp::Ord + std::cmp::PartialOrd + Clone + std::fmt::Debug,
 {
@@ -37,7 +37,7 @@ where
         f.debug_struct("AckWindow")
             .field("retry_times", &self.retry_times)
             .field("semaphore", &self.semaphore)
-            .field("ack_list", &self.ack_list)
+            .field("ack_list len", &self.ack_list.borrow().len())
             .finish()
     }
 }
@@ -123,6 +123,22 @@ where
         }
         self.waker.replace(Some(cx.waker().clone()));
         std::task::Poll::Pending
+    }
+
+    pub(super) fn get_retry_timeout(
+        retry_times: u64,
+        timeout: u64,
+        max: u8,
+    ) -> anyhow::Result<u64> {
+        let times: u64 = match retry_times {
+            less_than_three if less_than_three < 3 => less_than_three + 1,
+            other if other < max.into() => 4,
+            _ => {
+                tracing::error!("retry to many times, close connection");
+                return Err(anyhow::anyhow!("retry to many times, close connection"));
+            }
+        };
+        Ok(times * timeout)
     }
 }
 

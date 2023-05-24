@@ -8,9 +8,6 @@
     associated_type_bounds
 )]
 
-// #[cfg(all(feature = "tokio", feature = "tokio_uring"))]
-// compile_error!("feature \"foo\" and feature \"bar\" cannot be enabled at the same time");
-
 mod axum_handler;
 mod config;
 mod conhash;
@@ -19,11 +16,11 @@ mod linker;
 mod processor;
 mod raft;
 mod redis;
+mod snowflake;
 mod socket_addr;
 
 use once_cell::sync::OnceCell;
 
-// static AUTH_URL: OnceCell<String> = OnceCell::new();
 static HTTP_CLIENT: OnceCell<reqwest::Client> = OnceCell::new();
 static TCP_CONFIG: OnceCell<config::Tcp> = OnceCell::new();
 
@@ -63,6 +60,12 @@ async fn init() -> anyhow::Result<()> {
     let client = reqwest::Client::new();
     // AUTH_URL.set(config.tcp.auth).unwrap();
     HTTP_CLIENT.set(client).unwrap();
+    if let Some(ref tcp_retry) = config.tcp.retry {
+        println!("set tcp retry: {tcp_retry:?}");
+    } else {
+        eprintln!("tcp do not retry any more");
+    }
+
     TCP_CONFIG.set(config.tcp).unwrap();
 
     let redis_client = redis::Client::new(local_addr.to_string(), config.redis).await?;
@@ -82,6 +85,7 @@ async fn init() -> anyhow::Result<()> {
     let kafka_client = kafka::Client::new(local_addr.to_string().as_str(), config.kafka.clone())
         .await
         .unwrap();
+    println!("-----------");
     KAFKA_CLIENT.set(kafka_client.clone()).unwrap();
 
     let client = kafka_client;
@@ -138,7 +142,7 @@ async fn init() -> anyhow::Result<()> {
             // Process each socket concurrently.
             stream.set_nodelay(true).unwrap();
             if let Err(e) = linker::tcp::auth(stream).await {
-                tracing::error!("tcp auth error: {e:?}");
+                tracing::error!("{remote_addr} tcp auth error: {e:?}");
             } else {
                 tracing::info!("{remote_addr} authed");
             };
