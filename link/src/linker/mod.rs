@@ -1,9 +1,8 @@
-pub(crate) use message::{Content, Message, MessageCodec};
+pub(crate) use protocol::message::{Content, Message, MessageCodec};
 
 mod ack_window;
 mod auth;
-mod control_protocol;
-mod message;
+mod protocol;
 pub(crate) mod tcp;
 pub(crate) mod websocket;
 
@@ -124,7 +123,6 @@ impl User {
         if let Some(sender) = web.as_ref().inspect(|_| flag += 1) {
             if content.is_none() {
                 *content = Some(std::rc::Rc::new(
-                    // *content = Some(std::sync::Arc::new(
                     String::from_utf8_lossy(&message_bytes.as_ref()[44..]).to_string(),
                 ))
             }

@@ -21,7 +21,7 @@ impl Config {
 pub(crate) struct Tcp {
     pub(crate) port: u16,
     pub(crate) auth: String,
-    pub(crate) retry: Retry,
+    pub(crate) retry: Option<Retry>,
 }
 
 #[derive(serde_derive::Deserialize, Debug, Clone)]

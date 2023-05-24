@@ -70,6 +70,8 @@ pub(crate) fn process(
     let auth_message: Vec<u8> = (&auth_message).into();
     let _ = tx.send(Event::WriteBatch(auth_message.into()));
 
+    let retry_config = &crate::TCP_CONFIG.get().unwrap().retry;
+
     let tcp_collect_c = tcp_collect.clone();
     let ack_windows_c = ack_windows.clone();
     tokio::task::spawn_local(async move {
@@ -84,39 +86,45 @@ pub(crate) fn process(
                 }
             };
 
-            // FIXME: error when compressed.
-            if let Err(e) = ack_windows_c
-                .acquire(message[4..36].to_vec(), message.clone())
-                .await
-            {
-                tracing::error!("acquire ack windows failed: {e}");
-                return;
-            };
+            if let Some(ref ack_windows) = ack_windows_c {
+                // FIXME: error when compressed.
+                if let Err(e) = ack_windows
+                    .acquire(message[4..36].to_vec(), message.clone())
+                    .await
+                {
+                    tracing::error!("acquire ack windows failed: {e}");
+                    return;
+                };
+            }
+
             let _ = tcp_collect_c.send(Event::WriteBatch(message));
         }
     });
 
-    tokio::task::spawn_local(async move {
-        let retry_config = &crate::TCP_CONFIG.get().unwrap().retry;
+    if let Some(retry_config) = retry_config &&
+    let Some(ack_windows) = ack_windows {
         let max_times = retry_config.max_times;
         let retry_timeout = retry_config.timeout;
 
-        'Loop: loop {
-            let retry = ack_windows.try_again().await;
-            let timeout = match get_retry_timeout(retry.times.into(), retry_timeout, max_times) {
-                Ok(timeout) => timeout,
-                Err(_) => break,
-            };
-            tokio::time::sleep(tokio::time::Duration::from_millis(timeout)).await;
-            for message in retry.messages.iter() {
-                if let Err(e) = tcp_collect.send(Event::WriteBatch(message.clone())) {
-                    tracing::error!("tcp error: send retry message error: {e:?}");
-                    break 'Loop;
+        tokio::task::spawn_local(async move {
+            'Loop: loop {
+                let retry = ack_windows.try_again().await;
+                let timeout = match get_retry_timeout(retry.times.into(), retry_timeout, max_times)
+                {
+                    Ok(timeout) => timeout,
+                    Err(_) => break,
                 };
+                tokio::time::sleep(tokio::time::Duration::from_millis(timeout)).await;
+                for message in retry.messages.iter() {
+                    if let Err(e) = tcp_collect.send(Event::WriteBatch(message.clone())) {
+                        tracing::error!("tcp error: send retry message error: {e:?}");
+                        break 'Loop;
+                    };
+                }
             }
-        }
-        let _ = tcp_collect.send(Event::Close);
-    });
+            let _ = tcp_collect.send(Event::Close);
+        });
+    }
 
     tokio::task::spawn_local(async move {
         use tokio_stream::StreamExt as _;
@@ -170,10 +178,14 @@ fn handle(
     pin: std::rc::Rc<String>,
 ) -> (
     tokio::net::tcp::OwnedWriteHalf,
-    super::ack_window::AckWindow<Vec<u8>>,
+    Option<super::ack_window::AckWindow<Vec<u8>>>,
 ) {
-    let ack_windows =
-        super::ack_window::AckWindow::new(crate::TCP_CONFIG.get().unwrap().retry.window_size);
+    let ack_windows = if let Some(ref retry) = crate::TCP_CONFIG.get().unwrap().retry {
+        tracing::info!("[{pin}]tcp retry: set ack window");
+        Some(super::ack_window::AckWindow::new(retry.window_size))
+    } else {
+        None
+    };
 
     tracing::trace!("ready to handle tcp request: {:?}", stream.peer_addr());
     let (read, write) = stream.into_split();
@@ -197,7 +209,7 @@ fn handle(
                         break;
                     }
 
-                    let control: super::control_protocol::Control = match (req.as_slice())
+                    let control: crate::linker::protocol::Control = match (req.as_slice())
                         .try_into()
                     {
                         Ok(c) => c,
@@ -222,12 +234,14 @@ fn handle(
                     };
 
                     match control.event {
-                        crate::linker::control_protocol::Event::Ack(acks) => {
-                            for trace_id in acks.iter() {
-                                let _ = ack_windows_c.ack(trace_id.to_vec());
+                        crate::linker::protocol::control::Event::Ack(acks) => {
+                            if let Some(ref ack_windows) = ack_windows_c {
+                                for trace_id in acks.iter() {
+                                    let _ = ack_windows.ack(trace_id.to_vec());
+                                }
                             }
                         }
-                        crate::linker::control_protocol::Event::Package(pkg) => {
+                        crate::linker::protocol::control::Event::Package(pkg) => {
                             tracing::info!("tcp read message length: {n}");
                             let kafka = crate::KAFKA_CLIENT.get().unwrap();
 
@@ -239,9 +253,10 @@ fn handle(
                                 tracing::error!("Tcp Error: Kafka Error: {e}");
                                 break;
                             };
+                            // FIXME: ACK here
                         }
-                        crate::linker::control_protocol::Event::WeakAck => todo!(),
-                        crate::linker::control_protocol::Event::WeakPackage => todo!(),
+                        crate::linker::protocol::control::Event::WeakAck => todo!(),
+                        crate::linker::protocol::control::Event::WeakPackage => todo!(),
                     }
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {

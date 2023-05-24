@@ -1,13 +1,13 @@
 #[derive(Debug, Eq, PartialEq)]
-pub(super) struct Control<'e> {
-    pub(super) bad_network: Option<()>,
-    pub(super) heartbeat: Option<()>,
-    pub(super) event: Event<'e>,
-    pub(super) length: u8,
+pub(crate) struct Control<'e> {
+    pub(crate) bad_network: Option<()>,
+    pub(crate) heartbeat: Option<()>,
+    pub(crate) event: Event<'e>,
+    pub(crate) length: u8,
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub(super) enum Event<'e> {
+pub(crate) enum Event<'e> {
     Ack(Vec<&'e [u8]>),
     Package(&'e [u8]),
     WeakAck,

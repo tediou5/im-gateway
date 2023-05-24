@@ -24,11 +24,11 @@ pub(crate) enum Content {
 }
 
 impl Content {
-    pub(super) fn new_base_info_content(
+    pub(crate) fn new_base_info_content(
         app_id: &str,
         id: &str,
         timestamp: i64,
-        base_info: &super::auth::BaseInfo,
+        base_info: &crate::linker::auth::BaseInfo,
     ) -> Content {
         let data = std::collections::HashMap::from([
             ("chatId".to_string(), serde_json::json!("")),
@@ -51,10 +51,10 @@ impl Content {
         Content::Message { _ext: data }
     }
 
-    pub(super) async fn handle_auth<F, U>(self, platform_op: F) -> anyhow::Result<()>
+    pub(crate) async fn handle_auth<F, U>(self, platform_op: F) -> anyhow::Result<()>
     where
         F: FnOnce(String, Message) -> U,
-        U: std::future::Future<Output = anyhow::Result<super::Login>>,
+        U: std::future::Future<Output = anyhow::Result<crate::linker::Login>>,
     {
         if let Content::Connect {
             app_id,
@@ -62,7 +62,7 @@ impl Content {
             platform,
         } = self
         {
-            super::auth::auth(app_id.as_str(), token.as_str(), platform.as_str())
+            crate::linker::auth::auth(app_id.as_str(), token.as_str(), platform.as_str())
                 .await?
                 .check(app_id, platform.to_lowercase(), platform_op)
                 .await?;

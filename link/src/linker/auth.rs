@@ -1,5 +1,3 @@
-use super::Content;
-
 pub(super) async fn auth(app_id: &str, token: &str, platform: &str) -> anyhow::Result<Response> {
     let auth_url = crate::TCP_CONFIG
         .get()
@@ -24,7 +22,7 @@ pub(super) async fn auth(app_id: &str, token: &str, platform: &str) -> anyhow::R
 }
 
 #[derive(Debug, serde_derive::Serialize, serde_derive::Deserialize)]
-pub(super) struct BaseInfo {
+pub(crate) struct BaseInfo {
     pub(super) pin: String,
     #[serde(flatten)]
     pub(super) _ext: std::collections::HashMap<String, serde_json::Value>,
@@ -67,7 +65,7 @@ impl Response {
                 .as_secs() as i64;
 
             let content =
-                Content::new_base_info_content(app_id.as_str(), id.as_str(), timestamp, &base_info);
+            crate::linker::Content::new_base_info_content(app_id.as_str(), id.as_str(), timestamp, &base_info);
             let message = (id, content).into();
 
             let chats = chats.into_iter().map(|chat| chat.into()).collect();
