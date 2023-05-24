@@ -28,7 +28,7 @@ impl<'e> Control<'e> {
                 // TODO: handle for bad network quality
             };
 
-            if control.heartbeat.is_some() || message.len() < 100 {
+            if control.heartbeat.is_some() {
                 let pin_c = pin.to_string();
                 tokio::task::spawn_local(async move {
                     if let Some(redis) = crate::REDIS_CLIENT.get() {
