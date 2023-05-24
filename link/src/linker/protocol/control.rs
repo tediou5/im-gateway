@@ -20,9 +20,9 @@ impl<'e> Control<'e> {
         message: &[u8],
         ack_window: &Option<crate::linker::ack_window::AckWindow<u64>>,
     ) -> anyhow::Result<()> {
-        let controls: crate::linker::protocol::Controls = message
-            .try_into()
-            .map_err(|e| anyhow::anyhow!("control error: try into control protocol error: {e}"))?;
+        let controls: crate::linker::protocol::Controls = message.try_into().map_err(|e| {
+            anyhow::anyhow!("[{pin}]control error: try into control protocol error: {e}")
+        })?;
         for control in controls.0.into_iter() {
             if control.bad_network.is_some() {
                 // TODO: handle for bad network quality
@@ -51,11 +51,10 @@ impl<'e> Control<'e> {
                     // TODO: not returned ack to the front end now.
                     let kafka = crate::KAFKA_CLIENT.get().unwrap();
 
-                    tracing::info!("control produce message");
                     kafka
                         .produce(crate::kafka::VecValue(pkg.to_vec()))
                         .await
-                        .map_err(|e| anyhow::anyhow!("control Error: Kafka Error: {e}"))?;
+                        .map_err(|e| anyhow::anyhow!("[{pin}]control Error: Kafka Error: {e}"))?;
                 }
                 crate::linker::protocol::control::Event::WeakAck => todo!(),
                 crate::linker::protocol::control::Event::WeakPackage => todo!(),
