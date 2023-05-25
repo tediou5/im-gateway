@@ -90,6 +90,7 @@ pub(crate) fn process(
 
     let retry_config = &crate::TCP_CONFIG.get().unwrap().retry;
 
+    let pin_c = pin.to_string();
     let tcp_collect_c = tcp_collect.clone();
     let ack_window_c = ack_window.clone();
     tokio::task::spawn_local(async move {
@@ -104,32 +105,28 @@ pub(crate) fn process(
                 }
             };
 
-            if let Some(ref ack_window) = ack_window_c {
-                // FIXME: error when compressed.
-                // FIXME: use trace id
-                if let Err(e) = ack_window.acquire(trace_id, message.clone()).await {
-                    tracing::error!("acquire ack windows failed: {e}");
-                    return;
-                };
+            // FIXME: error when compressed.
+            if let Some(ref ack_window) = ack_window_c &&
+            let Err(e) = ack_window.acquire(pin_c.as_str(), trace_id, &message).await {
+                tracing::error!("acquire ack windows failed: {e}");
+                let _ = tcp_collect_c.send(SenderEvent::Close);
+                return;
             }
 
             let _ = tcp_collect_c.send(SenderEvent::WriteBatch(message));
         }
     });
 
-    if let Some(retry_config) = retry_config &&
+    if let Some(crate::config::Retry { timeout, max_times, .. }) = retry_config &&
     let Some(ack_windows) = ack_window {
-        let max_times = retry_config.max_times;
-        let retry_timeout = retry_config.timeout;
-
         let pin_c = pin.to_string();
         tokio::task::spawn_local(async move {
             'retry: loop {
                 let retry = ack_windows.try_again().await;
-                let timeout = match super::ack_window::AckWindow::<u64>::get_retry_timeout(retry.times, retry_timeout, max_times)
+                let retry_timeout = match super::ack_window::AckWindow::<u64>::get_retry_timeout(retry.times, *timeout, *max_times)
                 {
                     Ok(timeout) => timeout,
-                    Err(_) => break,
+                    Err(_) => break 'retry,
                 };
                 for message in retry.messages.iter() {
                     if let Err(e) = tcp_collect.send(SenderEvent::WriteBatch(message.clone())) {
@@ -137,7 +134,7 @@ pub(crate) fn process(
                         break 'retry;
                     };
                 }
-                tokio::time::sleep(tokio::time::Duration::from_millis(timeout)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(retry_timeout)).await;
             }
             tracing::error!("[{pin_c}]tcp retry error, close connection");
             let _ = tcp_collect.send(SenderEvent::Close);
@@ -149,16 +146,13 @@ pub(crate) fn process(
 
         while let Some(event) = tcp_sender.next().await {
             let message = match event {
-                SenderEvent::WriteBatch(message) => message,
                 SenderEvent::Close => break,
+                SenderEvent::WriteBatch(message) => message,
             };
-
-            tracing::trace!("[{pin}] tcp waiting for write message");
 
             if (write.writable().await).is_err() {
                 break;
             };
-            tracing::trace!("[{pin}] tcp try to write");
             match write.try_write(message.as_slice()) {
                 Ok(_) => {
                     tracing::debug!("[{pin}] tcp write message");
@@ -184,7 +178,7 @@ pub(crate) fn process(
     tx
 }
 
-/// handle spawn a new thread, read the request through the tcpStream, then send response to channel tx
+/// handle spawn a new task, read the request through the tcpStream, then send response to channel tx
 fn handle(
     stream: tokio::net::TcpStream,
     tx: Sender,
@@ -206,7 +200,6 @@ fn handle(
     tokio::task::spawn_local(async move {
         let mut req = [0; 4096];
         loop {
-            let pin = pin.clone();
             // Wait for the socket to be readable
             tracing::trace!("tcp waiting for read request");
             if (read.readable()).await.is_err() {
@@ -218,7 +211,6 @@ fn handle(
             match read.try_read(&mut req) {
                 Ok(n) => {
                     if n == 0 {
-                        let _ = tx.send(Event::Close);
                         break;
                     }
 
@@ -237,7 +229,6 @@ fn handle(
                     continue;
                 }
                 Err(_e) => {
-                    let _ = tx.send(Event::Close);
                     break;
                 }
             }

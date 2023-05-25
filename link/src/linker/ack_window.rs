@@ -39,7 +39,7 @@ where
         f.debug_struct("AckWindow")
             .field("retry_times", &self.retry_times)
             .field(
-                "semaphore availablepermits",
+                "semaphore available permits",
                 &self.semaphore.available_permits(),
             )
             .finish()
@@ -85,30 +85,34 @@ where
 
     pub(super) async fn acquire(
         &self,
+        pin: &str,
         trace_id: T,
-        message: std::rc::Rc<Vec<u8>>,
+        message: &std::rc::Rc<Vec<u8>>,
     ) -> anyhow::Result<()> {
         let permit = (self.semaphore.clone()).acquire_owned().await?;
         let ack = Ack {
             permit,
-            message,
+            message: message.clone(),
             skip: true,
         };
-        tracing::info!("AckWindow: acquire trace_id: {trace_id:?}");
+        tracing::info!("[{pin}]AckWindow: acquire trace_id: {trace_id:?}");
+        let mut ack_list = self.ack_list.borrow_mut();
+        let flag = ack_list.len();
         // if acquire a new ack & waker is set & never retry before, wake it.
-        if let None = self.ack_list.borrow_mut().insert(trace_id, ack) &&
-        let Some(w) = self.waker.replace(None) {
+        if let None = ack_list.insert(trace_id, ack) &&
+        let Some(w) = self.waker.replace(None) &&
+        let 0 = flag {
+            tracing::info!("AckWindow: acquire: wake future...");
             w.wake();
         };
         Ok(())
     }
 
-    pub(super) fn ack(&self, trace_id: T) -> anyhow::Result<()> {
+    pub(super) fn ack(&self, pin: &str, trace_id: T) {
         if self.ack_list.borrow_mut().remove(&trace_id).is_some() {
-            tracing::info!("AckWindow: ack trace_id: {trace_id:?}");
+            tracing::info!("[{pin}]AckWindow: ack trace_id: {trace_id:?}");
             self.retry_times.replace(0);
         };
-        Ok(())
     }
 
     pub(super) async fn try_again(&self) -> Retry {
@@ -118,7 +122,6 @@ where
     pub(super) fn poll_try_again(&self, cx: &mut std::task::Context<'_>) -> std::task::Poll<Retry> {
         let mut ack_list = self.ack_list.borrow_mut();
         if !ack_list.is_empty() {
-            tracing::info!("AckWindow: retry: {self:?}");
             let time = self.retry_times.get() + 1;
             let times = self.retry_times.replace(time);
             let messages = ack_list
@@ -169,15 +172,15 @@ mod test {
         let local = tokio::task::LocalSet::new();
         let local_set = local.run_until(async {
             let ack_list = super::AckWindow::new(1);
-            ack_list.acquire(1, vec![0].into()).await.unwrap();
+            ack_list.acquire("test", 1, &vec![0].into()).await.unwrap();
             let ack_c = ack_list.clone();
             tokio::task::spawn_local(async move {
                 tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-                ack_list.ack(1).unwrap();
+                ack_list.ack("test", 1);
                 println!("ack window: ack trace: 1");
             });
 
-            ack_c.acquire(2, vec![0].into()).await.unwrap();
+            ack_c.acquire("test", 2, &vec![0].into()).await.unwrap();
             println!("ack window: acquire trace: 2")
         });
         rt.block_on(local_set);
@@ -196,7 +199,7 @@ mod test {
             let ack_c = ack_list.clone();
             tokio::task::spawn_local(async move {
                 tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-                ack_c.acquire(1, vec![0].into()).await.unwrap();
+                ack_c.acquire("test", 1, &vec![0].into()).await.unwrap();
                 println!("ack window: ack trace: 1");
             });
 
@@ -223,7 +226,7 @@ mod test {
             let ack_c = ack_list.clone();
             tokio::task::spawn_local(async move {
                 tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-                ack_c.acquire(2, vec![0].into()).await.unwrap();
+                ack_c.acquire("test", 2, &vec![0].into()).await.unwrap();
                 println!("ack window: ack trace: 2");
             });
 

@@ -58,8 +58,8 @@ pub(crate) fn process(
     let (ws_collect, ws_sender) = local_sync::mpsc::unbounded::channel::<SenderEvent>();
     let mut ws_sender = local_sync::stream_wrappers::unbounded::ReceiverStream::new(ws_sender);
 
-    let auth_message: Vec<u8> = auth_message.to_vec().unwrap();
     // FIXME: maybe panic if auth_message serialize  error.
+    let auth_message: Vec<u8> = auth_message.to_vec().unwrap();
     let mut id_worker = crate::snowflake::SnowflakeIdWorkerInner::new(1, 1).unwrap();
     let (trace_id, auth_message) =
         crate::linker::Content::pack_message(&auth_message, &mut id_worker).unwrap();
@@ -69,6 +69,7 @@ pub(crate) fn process(
 
     let retry_config = &crate::TCP_CONFIG.get().unwrap().retry;
 
+    let pin_c = pin.to_string();
     let ws_collect_c = ws_collect.clone();
     let ack_window_c = ack_window.clone();
     tokio::task::spawn_local(async move {
@@ -83,29 +84,25 @@ pub(crate) fn process(
                 }
             };
 
-            if let Some(ref ack_window) = ack_window_c {
-                // FIXME: error when compressed.
-                // FIXME: use trace id
-                if let Err(e) = ack_window.acquire(trace_id, message.clone()).await {
-                    tracing::error!("acquire ack windows failed: {e}");
-                    return;
-                };
+            // FIXME: error when compressed.
+            if let Some(ref ack_window) = ack_window_c &&
+            let Err(e) = ack_window.acquire(pin_c.as_str(), trace_id, &message).await {
+                tracing::error!("acquire ack windows failed: {e}");
+                let _ = ws_collect_c.send(SenderEvent::Close);
+                return;
             }
 
             let _ = ws_collect_c.send(SenderEvent::WriteBatch(message));
         }
     });
 
-    if let Some(retry_config) = retry_config &&
+    if let Some(crate::config::Retry { timeout, max_times, .. }) = retry_config &&
     let Some(ack_windows) = ack_window {
-        let max_times = retry_config.max_times;
-        let retry_timeout = retry_config.timeout;
-
         let pin_c = pin.to_string();
         tokio::task::spawn_local(async move {
             'retry: loop {
                 let retry = ack_windows.try_again().await;
-                let timeout = match crate::linker::ack_window::AckWindow::<u64>::get_retry_timeout(retry.times.into(), retry_timeout, max_times)
+                let retry_timeout = match crate::linker::ack_window::AckWindow::<u64>::get_retry_timeout(retry.times.into(), *timeout, *max_times)
                 {
                     Ok(timeout) => timeout,
                     Err(_) => break,
@@ -116,7 +113,7 @@ pub(crate) fn process(
                         break 'retry;
                     };
                 }
-                tokio::time::sleep(tokio::time::Duration::from_millis(timeout)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(retry_timeout)).await;
             }
             tracing::error!("[{pin_c}]tcp retry error, close connection");
             let _ = ws_collect.send(SenderEvent::Close);
@@ -178,7 +175,6 @@ fn handle(
     let ack_window_c = ack_window.clone();
     tokio::task::spawn_local(async move {
         while let Some(Ok(message)) = input.next().await {
-            let pin = pin.clone();
             match message {
                 axum::extract::ws::Message::Close(_close) => {
                     break;

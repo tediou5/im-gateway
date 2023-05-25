@@ -43,7 +43,7 @@ impl<'e> Control<'e> {
                 crate::linker::protocol::control::Event::Ack(acks) => {
                     if let Some(ref ack_window) = ack_window {
                         for trace_id in acks.into_iter() {
-                            let _ = ack_window.ack(trace_id);
+                            ack_window.ack(pin, trace_id);
                         }
                     };
                 }
