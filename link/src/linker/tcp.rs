@@ -168,7 +168,7 @@ pub(crate) fn process(
             }
         }
 
-        tracing::info!("[{pin}] tcp closed");
+        tracing::error!("[{pin}] tcp closed");
         use tokio::io::AsyncWriteExt as _;
         let _ = write.shutdown().await;
 
@@ -233,7 +233,7 @@ fn handle(
                 }
             }
         }
-        tracing::info!("Tcp: [{pin}] read error.");
+        tracing::error!("Tcp: [{pin}] read error.");
         let _ = tx.send(Event::Close);
         Ok::<(), anyhow::Error>(())
     });

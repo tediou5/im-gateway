@@ -146,7 +146,7 @@ pub(crate) fn process(
             };
         }
 
-        tracing::info!("[{pin}] websocket closed");
+        tracing::error!("[{pin}] websocket closed");
         let _ = write.close().await;
     });
 
@@ -194,7 +194,7 @@ fn handle(
                 _ => continue,
             }
         }
-        tracing::info!("websocket: [{pin}] read error.");
+        tracing::error!("websocket: [{pin}] read error.");
         let _ = tx.send(Event::Close);
         Ok::<(), anyhow::Error>(())
     });

@@ -138,6 +138,16 @@ async fn init() -> anyhow::Result<()> {
 
     println!("handle tcp connect");
     while let Ok((stream, remote_addr)) = tcp_listener.accept().await {
+        // set keepalive
+        let socket = socket2::Socket::from(stream.into_std().unwrap());
+        let keep_alive = socket2::TcpKeepalive::new()
+            .with_time(std::time::Duration::from_secs(3))
+            .with_interval(std::time::Duration::from_secs(3))
+            .with_retries(3);
+        socket.set_tcp_keepalive(&keep_alive).unwrap();
+        let stream: std::net::TcpStream = socket.into();
+        let stream = tokio::net::TcpStream::from_std(stream).unwrap();
+
         tokio::task::spawn_local(async move {
             tracing::info!("{remote_addr} connected");
             // Process each socket concurrently.
