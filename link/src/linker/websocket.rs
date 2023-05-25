@@ -102,7 +102,7 @@ pub(crate) fn process(
         tokio::task::spawn_local(async move {
             'retry: loop {
                 let retry = ack_windows.try_again().await;
-                let retry_timeout = match crate::linker::ack_window::AckWindow::<u64>::get_retry_timeout(retry.times.into(), *timeout, *max_times)
+                let retry_timeout = match crate::linker::ack_window::AckWindow::<u64>::get_retry_timeout(retry.times, *timeout, *max_times)
                 {
                     Ok(timeout) => timeout,
                     Err(_) => break,

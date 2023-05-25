@@ -1,22 +1,16 @@
-// 开始时间戳: 2023-05-24
+// 2023-05-24
 const TWEPOCH: u128 = 1684922700000;
-// 机器id所占的位数
 const WORKER_ID_BITS: u128 = 5;
-// 数据节点所占的位数
 const DATA_CENTER_ID_BITS: u128 = 5;
-// 支持最大的机器ID，最大是31
+// 31
 pub(crate) const MAX_WORKER_ID: u128 = (-1 ^ (-1 << WORKER_ID_BITS)) as u128;
-// 支持的最大数据节点ID，结果是31
+// 31
 const MAX_DATA_CENTER_ID: u128 = (-1 ^ (-1 << DATA_CENTER_ID_BITS)) as u128;
-// 序列号所占的位数
 const SEQUENCE_BITS: u128 = 12;
-// 工作节点标识ID向左移12位
 const WORKER_ID_SHIFT: u128 = SEQUENCE_BITS;
-// 数据节点标识ID向左移动17位: 12位序列号+5位工作节点
 const DATA_CENTER_ID_SHIFT: u128 = SEQUENCE_BITS + WORKER_ID_BITS;
-// 时间戳向左移动22位: 12位序列号+5位工作节点+5位数据节点
 const TIMESTAMP_LEFT_SHIFT: u128 = SEQUENCE_BITS + WORKER_ID_BITS + DATA_CENTER_ID_BITS;
-// 生成的序列掩码,这里是4095
+// 4095
 const SEQUENCE_MASK: u128 = (-1 ^ (-1 << SEQUENCE_BITS)) as u128;
 
 pub(crate) struct SnowflakeIdWorkerInner {

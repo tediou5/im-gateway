@@ -155,7 +155,7 @@ pub(crate) fn process(
             };
             match write.try_write(message.as_slice()) {
                 Ok(_) => {
-                    tracing::debug!("[{pin}] tcp write message");
+                    tracing::info!("[{pin}] tcp write message");
                     crate::axum_handler::LINK_SEND_COUNT
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
@@ -210,7 +210,6 @@ fn handle(
             // if the readiness event is a false positive.
             match read.try_read(&mut req) {
                 Ok(n) => {
-                    tracing::info!("[{pin}]tcp read {n} len message");
                     if n == 0 {
                         break;
                     }
