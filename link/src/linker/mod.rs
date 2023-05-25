@@ -128,6 +128,14 @@ impl User {
         };
 
         if flag == 0 {
+            let pin = self.pin.clone();
+            tokio::task::spawn_local(async move {
+                if let Some(redis) = crate::REDIS_CLIENT.get() {
+                    if let Err(e) = redis.del_heartbeat(pin.to_string()).await {
+                        tracing::error!("del [{pin}] heartbeat error: {e}",)
+                    };
+                }
+            });
             Err(anyhow::anyhow!("user all links has been disconnected"))
         } else {
             Ok(())

@@ -7,11 +7,13 @@ pub(super) struct Retry {
 pub(super) struct Ack {
     permit: local_sync::semaphore::OwnedSemaphorePermit,
     message: std::rc::Rc<Vec<u8>>,
+    skip: bool,
 }
 
 impl std::fmt::Debug for Ack {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Ack")
+            .field("skip", &self.skip)
             .field("permit", &self.permit)
             .field("message", &self.message)
             .finish()
@@ -36,8 +38,7 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AckWindow")
             .field("retry_times", &self.retry_times)
-            .field("semaphore", &self.semaphore)
-            .field("ack_list len", &self.ack_list.borrow().len())
+            .field("semaphore availablepermits", &self.semaphore.available_permits())
             .finish()
     }
 }
@@ -85,7 +86,11 @@ where
         message: std::rc::Rc<Vec<u8>>,
     ) -> anyhow::Result<()> {
         let permit = (self.semaphore.clone()).acquire_owned().await?;
-        let ack = Ack { permit, message };
+        let ack = Ack {
+            permit,
+            message,
+            skip: true,
+        };
         tracing::info!("AckWindow: acquire trace_id: {trace_id:?}");
         // if acquire a new ack & waker is set & never retry before, wake it.
         if let None = self.ack_list.borrow_mut().insert(trace_id, ack) &&
@@ -109,15 +114,22 @@ where
     }
 
     pub(super) fn poll_try_again(&self, cx: &mut std::task::Context<'_>) -> std::task::Poll<Retry> {
-        let ack_list = self.ack_list.borrow();
+        let mut ack_list = self.ack_list.borrow_mut();
         if !ack_list.is_empty() {
             tracing::info!("AckWindow: retry: {self:?}");
             let times = self
                 .retry_times
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let messages = ack_list
-                .iter()
-                .map(|(_, ack)| ack.message.clone())
+                .iter_mut()
+                .filter_map(|(_, Ack { message, skip, .. })| {
+                    if *skip {
+                        *skip = false;
+                        None
+                    } else {
+                        Some(message.clone())
+                    }
+                })
                 .collect();
             return std::task::Poll::Ready(Retry { times, messages });
         }

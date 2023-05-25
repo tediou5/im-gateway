@@ -40,8 +40,7 @@ pub(crate) async fn auth(mut stream: tokio::net::TcpStream) -> anyhow::Result<()
         // let auth = auth.try_into()?;
         TryInto::<crate::linker::Content>::try_into(auth)?
             .handle_auth(async move |platform, message| {
-                tracing::info!("platform connection: {platform:?} with baseinfo:\n{message:?}");
-
+                tracing::info!("platform connection: {platform:?}");
                 match platform.as_str() {
                     "app" => Ok(super::Login {
                         platform: super::Platform::App(stream),
@@ -132,13 +131,13 @@ pub(crate) fn process(
                     Ok(timeout) => timeout,
                     Err(_) => break,
                 };
-                tokio::time::sleep(tokio::time::Duration::from_millis(timeout)).await;
                 for message in retry.messages.iter() {
                     if let Err(e) = tcp_collect.send(SenderEvent::WriteBatch(message.clone())) {
                         tracing::error!("tcp error: send retry message error: {e:?}");
                         break 'retry;
                     };
                 }
+                tokio::time::sleep(tokio::time::Duration::from_millis(timeout)).await;
             }
             tracing::error!("[{pin_c}]tcp retry error, close connection");
             let _ = tcp_collect.send(SenderEvent::Close);
@@ -176,11 +175,6 @@ pub(crate) fn process(
         }
 
         tracing::info!("[{pin}] tcp closed");
-        if let Some(redis) = crate::REDIS_CLIENT.get() {
-            if let Err(e) = redis.del_heartbeat(pin.to_string()).await {
-                tracing::error!("del [{pin}] heartbeat error: {}", e)
-            };
-        }
         use tokio::io::AsyncWriteExt as _;
         let _ = write.shutdown().await;
 

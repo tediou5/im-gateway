@@ -29,8 +29,7 @@ pub(crate) async fn websocket(
             TryInto::<crate::linker::Content>::try_into(auth)
                 .unwrap()
                 .handle_auth(async move |platform, message| {
-                    tracing::info!("platform connection: {platform:?} with baseinfo:\n{message:?}");
-
+                    tracing::info!("platform connection: {platform:?}");
                     match platform.as_str() {
                         "web" => Ok(super::Login {
                             platform: super::Platform::Web(socket),
@@ -111,13 +110,13 @@ pub(crate) fn process(
                     Ok(timeout) => timeout,
                     Err(_) => break,
                 };
-                tokio::time::sleep(tokio::time::Duration::from_millis(timeout)).await;
                 for message in retry.messages.iter() {
                     if let Err(e) = ws_collect.send(SenderEvent::WriteBatch(message.clone())) {
                         tracing::error!("websocket error: send retry message error: {e:?}");
                         break 'retry;
                     };
                 }
+                tokio::time::sleep(tokio::time::Duration::from_millis(timeout)).await;
             }
             tracing::error!("[{pin_c}]tcp retry error, close connection");
             let _ = ws_collect.send(SenderEvent::Close);
@@ -151,11 +150,6 @@ pub(crate) fn process(
         }
 
         tracing::info!("[{pin}] websocket closed");
-        if let Some(redis) = crate::REDIS_CLIENT.get() {
-            if let Err(e) = redis.del_heartbeat(pin.to_string()).await {
-                tracing::error!("del [{pin}] heartbeat error: {}", e)
-            };
-        }
         let _ = write.close().await;
     });
 
@@ -171,7 +165,7 @@ fn handle(
     Option<super::ack_window::AckWindow<u64>>,
 ) {
     let ack_window = if let Some(ref retry) = crate::TCP_CONFIG.get().unwrap().retry {
-        tracing::info!("[{pin}]tcp retry: set ack window");
+        tracing::info!("[{pin}]websocket retry: set ack window");
         Some(super::ack_window::AckWindow::new(retry.window_size))
     } else {
         None
@@ -190,7 +184,6 @@ fn handle(
                     break;
                 }
                 axum::extract::ws::Message::Binary(message) => {
-                    tracing::info!("[{pin}]websocket read binary message");
                     if let Err(e) = crate::linker::protocol::control::Control::process(
                         pin.as_str(),
                         message.as_slice(),

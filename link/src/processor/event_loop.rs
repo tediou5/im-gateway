@@ -108,7 +108,6 @@ async fn process(
     tracing::debug!(">>>>>>>>> {name} <<<<<<<<<");
     match event {
         Event::Login(pin, chat_list, login) => {
-            tracing::error!("{pin} login");
             let pin = std::rc::Rc::new(pin);
             if let Some(redis) = crate::REDIS_CLIENT.get() {
                 if let Err(e) = redis.heartbeat(pin.to_string()).await {
@@ -138,12 +137,12 @@ async fn process(
         }
         Event::Private(pin, message) => {
             if let Some(sender) = users.get_mut(&pin) {
-                tracing::info!("send user: {pin}");
+                tracing::debug!("send user: {pin}");
                 let (trace_id, message) =
                     crate::linker::Content::pack_message(&message, id_worker)?;
                 let message = std::rc::Rc::new(message);
                 if sender.send(trace_id, &message).is_err() {
-                    tracing::info!("remove user: {pin}");
+                    tracing::debug!("remove user: {pin}");
                     users.remove(&pin);
                 };
             }
@@ -162,7 +161,7 @@ async fn process(
                     crate::linker::Content::pack_message(&message, id_worker)?;
                 let message = std::rc::Rc::new(message);
 
-                tracing::info!("send group: <{chat}>: {} message", recv_list.len());
+                tracing::debug!("send group: <{chat}>: {} message", recv_list.len());
 
                 for one in recv_list.iter() {
                     if one.send(trace_id, &message).is_err() {
@@ -175,7 +174,7 @@ async fn process(
         }
         Event::Chat(crate::processor::chat::Action::Leave(chat, members)) => {
             if let Some(online) = chats.get_mut(&chat.to_string()) {
-                tracing::info!("try leave {members:?} from <{chat}>: {online:?}");
+                tracing::debug!("try leave {members:?} from <{chat}>: {online:?}");
                 for member in members.iter() {
                     if let Some(user) = users.get(member) {
                         if online.remove(user) {
@@ -188,7 +187,7 @@ async fn process(
         Event::Chat(crate::processor::chat::Action::Join(chat, members)) => {
             let members = _join(users, members);
             if !members.is_empty() {
-                tracing::info!("add {members:?} into [{chat}]");
+                tracing::debug!("add {members:?} into [{chat}]");
                 let online = chats.entry(chat.to_string()).or_default();
                 if online.is_empty() {
                     if let Some(redis_client) = crate::REDIS_CLIENT.get() {
@@ -202,14 +201,14 @@ async fn process(
             }
         }
         Event::Chat(super::chat::Action::Notice(chat, message)) => {
-            tracing::info!("send notice to [{chat}]");
+            tracing::debug!("send notice to [{chat}]");
             if let Some(online) = chats.get_mut(&chat.to_string()) {
-                tracing::info!("[{chat}] with online members: {online:?}");
+                tracing::debug!("[{chat}] with online members: {online:?}");
                 let (trace_id, message) =
                     crate::linker::Content::pack_message(&message, id_worker)?;
                 let message = std::rc::Rc::new(message);
 
-                tracing::info!("send group [{}] message", online.len());
+                tracing::debug!("send group [{}] message", online.len());
 
                 online.retain(|one| {
                     one.send(trace_id, &message)

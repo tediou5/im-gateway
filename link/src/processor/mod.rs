@@ -77,7 +77,7 @@ async fn dispatch(
             };
         }
         Event::Private(recvs, message) => {
-            tracing::info!("send private message to {recvs:?}");
+            tracing::debug!("send private message to {recvs:?}");
             let message = std::sync::Arc::new(message);
             for pin in recvs {
                 if let Some(node) = conhash.get(pin.as_bytes()) {
@@ -92,7 +92,7 @@ async fn dispatch(
             }
         }
         Event::Group(chat, exclusions, message) => {
-            tracing::info!("send group message to {chat:?}");
+            tracing::debug!("send group message to {chat:?}");
             let message = std::sync::Arc::new(message);
             for event_loop in event_loops {
                 if let Err(e) = event_loop
@@ -110,7 +110,7 @@ async fn dispatch(
             }
         }
         Event::Chat(chat::Action::Notice(chat, message)) => {
-            tracing::info!("send group notice to {chat:?}");
+            tracing::debug!("send group notice to {chat:?}");
             for event_loop in event_loops {
                 if let Err(e) = event_loop
                     .mailbox
@@ -125,7 +125,7 @@ async fn dispatch(
             }
         }
         Event::Chat(action) => {
-            tracing::info!("send group action {action:?}");
+            tracing::debug!("send group action {action:?}");
             for event_loop in event_loops {
                 if let Err(e) = event_loop
                     .mailbox

@@ -114,7 +114,6 @@ impl<'e> TryFrom<&'e [u8]> for Controls<'e> {
                         return Err(anyhow::anyhow!("InvalidBodyLength:\n{value:?}"));
                     };
                     let ack_body = &body[1..=len];
-                    println!("ack body: {ack_body:?}");
                     len += 1;
                     Event::Ack(
                         ack_body
@@ -223,7 +222,20 @@ mod test {
             33, 0, 0, 16, 135, 38, 195, 208, 1, 33, 0, 0, 16, 135, 38, 195, 208, 0,
         ];
         let ack: Controls = ack.as_ref().try_into().unwrap();
+        assert_eq!(ack.0.len(), 2);
         println!("ack: {ack:?}");
+    }
+
+    #[test]
+    fn test_for_heartbeat() {
+        let heartbeat = [
+            65, 0, 42, 23, 14, 43, 198, 251, 0, 16, 0, 123, 34, 100, 97, 116, 97, 34, 58, 123, 34,
+            115, 116, 97, 116, 117, 115, 34, 58, 50, 48, 48, 125, 44, 34, 112, 114, 111, 116, 111,
+            99, 111, 108, 34, 58, 34, 72, 101, 97, 114, 116, 34, 125,
+        ];
+        let heartbeat: Controls = heartbeat.as_ref().try_into().unwrap();
+        println!("heartbeat: {heartbeat:?}");
+        assert!(heartbeat.0[0].heartbeat.is_some())
     }
 
     #[test]
