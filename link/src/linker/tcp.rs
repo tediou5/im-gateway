@@ -126,7 +126,7 @@ pub(crate) fn process(
         tokio::task::spawn_local(async move {
             'retry: loop {
                 let retry = ack_windows.try_again().await;
-                let timeout = match super::ack_window::AckWindow::<u64>::get_retry_timeout(retry.times.into(), retry_timeout, max_times)
+                let timeout = match super::ack_window::AckWindow::<u64>::get_retry_timeout(retry.times, retry_timeout, max_times)
                 {
                     Ok(timeout) => timeout,
                     Err(_) => break,
@@ -204,7 +204,7 @@ fn handle(
     let (read, write) = stream.into_split();
     let ack_window_c = ack_window.clone();
     tokio::task::spawn_local(async move {
-        let mut req = [0; 2048];
+        let mut req = [0; 4096];
         loop {
             let pin = pin.clone();
             // Wait for the socket to be readable

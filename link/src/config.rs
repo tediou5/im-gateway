@@ -27,9 +27,9 @@ pub(crate) struct Tcp {
 #[derive(serde_derive::Deserialize, Debug, Clone)]
 pub(crate) struct Retry {
     // millis
-    pub(crate) timeout: u64,
-    pub(crate) max_times: u8,
-    pub(crate) window_size: u8,
+    pub(crate) timeout: usize,
+    pub(crate) max_times: usize,
+    pub(crate) window_size: usize,
 }
 
 #[derive(serde_derive::Deserialize, Debug, Clone)]

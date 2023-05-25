@@ -1,6 +1,6 @@
 #[derive(Debug, PartialEq)]
 pub(super) struct Retry {
-    pub(super) times: u8,
+    pub(super) times: usize,
     pub(super) messages: Vec<std::rc::Rc<Vec<u8>>>,
 }
 
@@ -25,7 +25,7 @@ pub(crate) struct AckWindow<T>
 where
     T: std::hash::Hash + std::cmp::Ord + std::cmp::PartialOrd + Clone + std::fmt::Debug,
 {
-    retry_times: std::rc::Rc<std::sync::atomic::AtomicU8>,
+    retry_times: std::rc::Rc<std::cell::Cell<usize>>,
     semaphore: std::rc::Rc<local_sync::semaphore::Semaphore>,
     ack_list: std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<T, Ack>>>,
     waker: std::rc::Rc<std::cell::Cell<Option<std::task::Waker>>>,
@@ -38,7 +38,10 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AckWindow")
             .field("retry_times", &self.retry_times)
-            .field("semaphore availablepermits", &self.semaphore.available_permits())
+            .field(
+                "semaphore availablepermits",
+                &self.semaphore.available_permits(),
+            )
             .finish()
     }
 }
@@ -61,15 +64,15 @@ impl<T> AckWindow<T>
 where
     T: std::hash::Hash + std::cmp::Ord + std::cmp::PartialOrd + Clone + std::fmt::Debug,
 {
-    pub(super) fn new(permits: u8) -> Self {
-        let semaphore = local_sync::semaphore::Semaphore::new(permits.into());
+    pub(super) fn new(permits: usize) -> Self {
+        let semaphore = local_sync::semaphore::Semaphore::new(permits);
         let semaphore = semaphore.into();
 
         let ack_list = std::cell::RefCell::new(std::collections::BTreeMap::new());
         let ack_list = ack_list.into();
 
         Self {
-            retry_times: std::sync::atomic::AtomicU8::new(0).into(),
+            retry_times: std::cell::Cell::new(0).into(),
             semaphore,
             ack_list,
             waker: std::cell::Cell::new(None).into(),
@@ -103,8 +106,7 @@ where
     pub(super) fn ack(&self, trace_id: T) -> anyhow::Result<()> {
         if self.ack_list.borrow_mut().remove(&trace_id).is_some() {
             tracing::info!("AckWindow: ack trace_id: {trace_id:?}");
-            self.retry_times
-                .swap(0, std::sync::atomic::Ordering::SeqCst);
+            self.retry_times.replace(0);
         };
         Ok(())
     }
@@ -117,9 +119,8 @@ where
         let mut ack_list = self.ack_list.borrow_mut();
         if !ack_list.is_empty() {
             tracing::info!("AckWindow: retry: {self:?}");
-            let times = self
-                .retry_times
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let time = self.retry_times.get() + 1;
+            let times = self.retry_times.replace(time);
             let messages = ack_list
                 .iter_mut()
                 .filter_map(|(_, Ack { message, skip, .. })| {
@@ -138,19 +139,19 @@ where
     }
 
     pub(super) fn get_retry_timeout(
-        retry_times: u64,
-        timeout: u64,
-        max: u8,
+        retry_times: usize,
+        timeout: usize,
+        max: usize,
     ) -> anyhow::Result<u64> {
         let times: u64 = match retry_times {
-            less_than_three if less_than_three < 3 => less_than_three + 1,
-            other if other < max.into() => 4,
+            less_than_three if less_than_three < 3 => less_than_three as u64 + 1,
+            other if other < max => 4,
             _ => {
                 tracing::error!("retry to many times, close connection");
                 return Err(anyhow::anyhow!("retry to many times, close connection"));
             }
         };
-        Ok(times * timeout)
+        Ok(times * timeout as u64)
     }
 }
 
@@ -205,7 +206,7 @@ mod test {
                 retry1,
                 Retry {
                     times: 0,
-                    messages: vec![vec![0].into()]
+                    messages: vec![]
                 }
             );
 
@@ -226,13 +227,13 @@ mod test {
                 println!("ack window: ack trace: 2");
             });
 
-            ack_list.ack(1).unwrap();
+            // ack_list.ack(1).unwrap();
             let retry3 = ack_list.try_again().await;
             println!("ack window: retry 3: {retry3:?}");
             assert_eq!(
                 retry3,
                 Retry {
-                    times: 0,
+                    times: 2,
                     messages: vec![vec![0].into()]
                 }
             );

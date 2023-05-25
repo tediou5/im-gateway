@@ -109,12 +109,11 @@ impl<'e> TryFrom<&'e [u8]> for Controls<'e> {
                     if number == 0 {
                         return Err(anyhow::anyhow!("ACKNumberMustNotBeZero:\n{value:?}"));
                     };
-                    len = number as usize * 8;
-                    if body.len() < len + 1 {
+                    len = number as usize * 8 + 1;
+                    if body.len() < len {
                         return Err(anyhow::anyhow!("InvalidBodyLength:\n{value:?}"));
                     };
-                    let ack_body = &body[1..=len];
-                    len += 1;
+                    let ack_body = &body[1..len];
                     Event::Ack(
                         ack_body
                             .chunks_exact(8)
