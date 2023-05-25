@@ -210,6 +210,7 @@ fn handle(
             // if the readiness event is a false positive.
             match read.try_read(&mut req) {
                 Ok(n) => {
+                    tracing::info!("[{pin}]tcp read {n} len message");
                     if n == 0 {
                         break;
                     }

@@ -102,7 +102,7 @@ where
         if let None = ack_list.insert(trace_id, ack) &&
         let Some(w) = self.waker.replace(None) &&
         let 0 = flag {
-            tracing::info!("AckWindow: acquire: wake future...");
+            tracing::info!("[{pin}]AckWindow: acquire: wake future...");
             w.wake();
         };
         Ok(())

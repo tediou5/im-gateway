@@ -1,6 +1,7 @@
 #![feature(
     let_chains,
     async_closure,
+    const_trait_impl,
     iter_collect_into,
     iterator_try_collect,
     string_remove_matches,
@@ -34,7 +35,7 @@ type TokioSender<T> = tokio::sync::mpsc::UnboundedSender<T>;
 struct Args {
     // config path
     #[arg(short, long)]
-    config: String,
+    config: Option<String>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -53,7 +54,7 @@ async fn init() -> anyhow::Result<()> {
     println!("local addr: {local_addr:?}");
 
     let args = <Args as clap::Parser>::parse();
-    let config = config::Config::init(args.config);
+    let config = config::Config::init(args.config.unwrap_or("./config.toml".to_string()));
 
     let tcp_listener = tokio::net::TcpListener::bind(config.get_tcp_addr_str()).await?;
 

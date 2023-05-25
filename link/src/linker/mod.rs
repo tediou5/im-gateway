@@ -21,9 +21,9 @@ pub(crate) enum Platform {
 #[derive(Debug, Clone)]
 pub(crate) struct User {
     pub(crate) pin: std::rc::Rc<String>,
+    pub(crate) pc: std::rc::Rc<std::cell::RefCell<Option<tcp::Sender>>>,
     pub(crate) app: std::rc::Rc<std::cell::RefCell<Option<tcp::Sender>>>,
     pub(crate) web: std::rc::Rc<std::cell::RefCell<Option<websocket::Sender>>>,
-    pub(crate) pc: std::rc::Rc<std::cell::RefCell<Option<tcp::Sender>>>,
 }
 
 impl std::hash::Hash for User {
