@@ -21,12 +21,15 @@ pub(crate) async fn websocket(
             _ => return,
         };
 
-        let mut auth =
-            TryInto::<crate::linker::protocol::Controls>::try_into(auth.as_slice()).unwrap();
-        let _ = if let crate::linker::protocol::control::Event::Package(_len, _trace_id, auth) =
-            auth.0.pop().unwrap().event
-        {
-            TryInto::<crate::linker::Content>::try_into(auth)
+        use tokio_util::codec::Decoder as _;
+        let mut dst = bytes::BytesMut::from(auth.as_slice());
+        let auth = crate::linker::protocol::ControlCodec
+            .decode(&mut dst)
+            .unwrap()
+            .unwrap();
+
+        let _ = if let crate::linker::protocol::control::Event::Package(.., auth) = auth.event {
+            TryInto::<crate::linker::Content>::try_into(auth.as_slice())
                 .unwrap()
                 .handle_auth(async move |platform, message| {
                     tracing::info!("platform connection: {platform:?}");
@@ -180,13 +183,14 @@ fn handle(
                     break;
                 }
                 axum::extract::ws::Message::Binary(message) => {
-                    if let Err(e) = crate::linker::protocol::control::Control::process(
-                        pin.as_str(),
-                        message.as_slice(),
-                        &ack_window_c,
-                    )
-                    .await
-                    {
+                    use tokio_util::codec::Decoder as _;
+
+                    let mut dst = bytes::BytesMut::from(message.as_slice());
+                    let control = crate::linker::protocol::ControlCodec
+                        .decode(&mut dst)
+                        .unwrap()
+                        .unwrap();
+                    if let Err(e) = control.process(pin.as_str(), &ack_window_c).await {
                         tracing::error!("websocket error: control protocol process error: {e}");
                         break;
                     };

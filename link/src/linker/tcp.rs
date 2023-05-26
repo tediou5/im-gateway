@@ -33,12 +33,15 @@ pub(crate) async fn auth(mut stream: tokio::net::TcpStream) -> anyhow::Result<()
 
     tracing::trace!("recv auth request from tcp: {auth:?}");
 
-    let mut auth = TryInto::<crate::linker::protocol::Controls>::try_into(auth)?;
-    if let crate::linker::protocol::control::Event::Package(_len, _trace_id, auth) =
-        auth.0.pop().unwrap().event
-    {
-        // let auth = auth.try_into()?;
-        TryInto::<crate::linker::Content>::try_into(auth)?
+    use tokio_util::codec::Decoder as _;
+    let mut dst = bytes::BytesMut::from(req.as_slice());
+    let auth = crate::linker::protocol::ControlCodec
+        .decode(&mut dst)
+        .unwrap()
+        .unwrap();
+
+    if let crate::linker::protocol::control::Event::Package(.., auth) = auth.event {
+        TryInto::<crate::linker::Content>::try_into(auth.as_slice())?
             .handle_auth(async move |platform, message| {
                 tracing::info!("platform connection: {platform:?}");
                 match platform.as_str() {
@@ -76,10 +79,9 @@ pub(crate) fn process(
     let (tcp_collect, tcp_sender) = local_sync::mpsc::unbounded::channel::<SenderEvent>();
     let mut tcp_sender = local_sync::stream_wrappers::unbounded::ReceiverStream::new(tcp_sender);
 
-    let (mut write, ack_window) = handle(stream, tx.clone(), pin.clone());
+    let (mut sink, ack_window) = handle(stream, tx.clone(), pin.clone());
 
     // send auth message first, auth message alse need ack.
-    // FIXME:
     let auth_message: Vec<u8> = auth_message.to_vec().unwrap();
     let mut id_worker = crate::snowflake::SnowflakeIdWorkerInner::new(1, 1).unwrap();
     let (trace_id, auth_message) =
@@ -142,35 +144,18 @@ pub(crate) fn process(
     }
 
     tokio::task::spawn_local(async move {
+        use futures::SinkExt as _;
         use tokio_stream::StreamExt as _;
 
-        while let Some(event) = tcp_sender.next().await {
-            let message = match event {
-                SenderEvent::Close => break,
-                SenderEvent::WriteBatch(message) => message,
-            };
-
-            if (write.writable().await).is_err() {
+        while let Some(event) = tcp_sender.next().await &&
+        let SenderEvent::WriteBatch(message) = event {
+            if sink.send(message).await.is_err() {
                 break;
-            };
-            match write.try_write(message.as_slice()) {
-                Ok(_) => {
-                    tracing::info!("[{pin}] tcp write message");
-                    crate::axum_handler::LINK_SEND_COUNT
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    continue;
-                }
-                Err(_e) => {
-                    break;
-                }
             }
         }
 
         tracing::error!("[{pin}] tcp closed");
-        use tokio::io::AsyncWriteExt as _;
-        let _ = write.shutdown().await;
+        let _ = sink.close().await;
 
         crate::axum_handler::LINK_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
     });
@@ -184,7 +169,10 @@ fn handle(
     tx: Sender,
     pin: std::rc::Rc<String>,
 ) -> (
-    tokio::net::tcp::OwnedWriteHalf,
+    futures::stream::SplitSink<
+        tokio_util::codec::Framed<tokio::net::TcpStream, crate::linker::protocol::ControlCodec>,
+        std::rc::Rc<Vec<u8>>,
+    >,
     Option<super::ack_window::AckWindow<u64>>,
 ) {
     let ack_window = if let Some(ref retry) = crate::TCP_CONFIG.get().unwrap().retry {
@@ -195,51 +183,25 @@ fn handle(
     };
 
     tracing::trace!("ready to handle tcp request: {:?}", stream.peer_addr());
-    let (read, write) = stream.into_split();
+    use futures::StreamExt as _;
+    use tokio_util::codec::Decoder as _;
+    let codec = crate::linker::protocol::ControlCodec {};
+    let (sink, mut stream) = codec.framed(stream).split();
+
     let ack_window_c = ack_window.clone();
     tokio::task::spawn_local(async move {
-        let mut req = vec![0; 2048];
-        loop {
-            // Wait for the socket to be readable
-            tracing::trace!("tcp waiting for read request");
-            if (read.readable()).await.is_err() {
+        while let Some(control) = stream.next().await {
+            if let Ok(control) = control &&
+            let Err(e) = control.process(pin.as_str(), &ack_window_c,).await {
+                tracing::error!("tcp error: control protocol process error: {e}");
                 break;
-            }
-            tracing::trace!("tcp try to read");
-            // Try to read data, this may still fail with `WouldBlock`
-            // if the readiness event is a false positive.
-            match read.try_read(&mut req) {
-                Ok(n) => {
-                    if n == 0 {
-                        break;
-                    }
-
-                    if let Err(e) = crate::linker::protocol::control::Control::process(
-                        pin.as_str(),
-                        &req[..n],
-                        &ack_window_c,
-                    )
-                    .await
-                    {
-                        tracing::error!("tcp error: control protocol process error: {e}");
-                        break;
-                    };
-                    req.truncate(2048)
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    continue;
-                }
-                Err(_e) => {
-                    break;
-                }
             }
         }
         tracing::error!("Tcp: [{pin}] read error.");
         let _ = tx.send(Event::Close);
-        Ok::<(), anyhow::Error>(())
     });
 
-    (write, ack_window)
+    (sink, ack_window)
 }
 
 #[cfg(test)]
