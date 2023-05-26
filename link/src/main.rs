@@ -42,7 +42,7 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    println!("version: 2023/5/18-11:08");
+    println!("version: 2023/5/26-19:00");
 
     let _ = tokio::task::LocalSet::new().run_until(init()).await;
 
@@ -86,19 +86,30 @@ async fn init() -> anyhow::Result<()> {
     let kafka_client = kafka::Client::new(local_addr.to_string().as_str(), config.kafka.clone())
         .await
         .unwrap();
-    println!("-----------");
     KAFKA_CLIENT.set(kafka_client.clone()).unwrap();
 
     let client = kafka_client;
     println!("starting kafka client");
-
-    tokio::task::spawn_local(async move {
-        processor::run(core_ids).await.unwrap();
-    });
+    println!("
+    #############################################################################################################\n\n
+      #########   #             #        #########   ##       #      ##########   ##########          #
+          #       ##           ##            #       # #      #         #         #        #         # #
+          #       # #         # #            #       #  #     #        #          #        #        #   #
+          #       #  #       #  #            #       #   #    #   ##########      ##########       #######
+          #       #   #     #   #            #       #    #   #      #            # #             #       #
+          #       #    #   #    #            #       #     #  #     #             #   #          #         #
+          #       #     # #     #            #       #      # #    #              #     #       #           #
+      #########   #      #      #        #########   #       ##   #               #       #    #             #\n\n
+    #############################################################################################################
+    ");
 
     tokio::task::spawn_local(async {
         println!("running http server");
         axum_handler::run(config.http).await;
+    });
+
+    tokio::task::spawn_local(async move {
+        processor::run(core_ids).await.unwrap();
     });
 
     tokio::task::spawn_local(async move {
@@ -140,6 +151,20 @@ async fn init() -> anyhow::Result<()> {
     while let Ok((stream, remote_addr)) = tcp_listener.accept().await {
         tokio::task::spawn_local(async move {
             tracing::info!("{remote_addr} connected");
+
+            // set keepalive
+            let stream = stream.into_std().unwrap();
+            let socket = socket2::Socket::from(stream);
+            let keep_alive = socket2::TcpKeepalive::new()
+                .with_time(std::time::Duration::from_secs(5))
+                .with_interval(std::time::Duration::from_secs(1))
+                .with_retries(3);
+            socket
+                .set_tcp_keepalive(&keep_alive)
+                .map_err(|e| format!("set keep alive error: {e}"))
+                .unwrap();
+            let stream = tokio::net::TcpStream::from_std(socket.into()).unwrap();
+
             // Process each socket concurrently.
             stream.set_nodelay(true).unwrap();
             if let Err(e) = linker::tcp::auth(stream).await {

@@ -52,6 +52,7 @@ impl Control {
                     };
                 }
             });
+            return Ok(());
         };
 
         match self.event {
@@ -84,10 +85,7 @@ impl tokio_util::codec::Encoder<std::rc::Rc<Vec<u8>>> for ControlCodec {
         item: std::rc::Rc<Vec<u8>>,
         dst: &mut bytes::BytesMut,
     ) -> anyhow::Result<()> {
-        // Reserve space in the buffer.
         dst.reserve(item.len());
-
-        // Write the length and string to the buffer.
         dst.extend_from_slice(item.as_slice());
         Ok(())
     }
@@ -100,7 +98,7 @@ impl tokio_util::codec::Decoder for ControlCodec {
 
     fn decode(&mut self, src: &mut bytes::BytesMut) -> anyhow::Result<Option<Self::Item>> {
         if src.len() < 1 {
-            // Not enough data to read length marker.
+            // Not enough data to read header marker.
             return Ok(None);
         }
 
@@ -118,14 +116,9 @@ impl tokio_util::codec::Decoder for ControlCodec {
                 };
 
                 if (src.len() as u16) < 11 {
-                    // The full string has not yet arrived.
-                    //
-                    // We reserve more space in the buffer. This is not strictly
-                    // necessary, but is a good idea performance-wise.
+                    // Not enough data to read length marker.
                     src.reserve(11 - src.len());
 
-                    // We inform the Framed that we need more bytes to form the next
-                    // frame.
                     return Ok(None);
                 }
 
