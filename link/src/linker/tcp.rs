@@ -198,7 +198,7 @@ fn handle(
     let (read, write) = stream.into_split();
     let ack_window_c = ack_window.clone();
     tokio::task::spawn_local(async move {
-        let mut req = [0; 4096];
+        let mut req = vec![0; 2048];
         loop {
             // Wait for the socket to be readable
             tracing::trace!("tcp waiting for read request");
@@ -224,6 +224,7 @@ fn handle(
                         tracing::error!("tcp error: control protocol process error: {e}");
                         break;
                     };
+                    req.truncate(2048)
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     continue;

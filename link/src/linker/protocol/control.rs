@@ -38,11 +38,11 @@ impl<'e> Control<'e> {
         ack_window: &Option<crate::linker::ack_window::AckWindow<u64>>,
     ) -> anyhow::Result<()> {
         let len = message.len();
-        tracing::info!("try into controls");
+        tracing::debug!("try into controls");
         let controls: crate::linker::protocol::Controls = message.try_into().map_err(|e| {
             anyhow::anyhow!("[{pin}]control error: try into control protocol error: {e}")
         })?;
-        tracing::info!("[{pin}]process {len} len message into controls:\n{controls:?}\n--------------------------------");
+        tracing::debug!("[{pin}]process {len} len message into controls:\n{controls:?}\n--------------------------------");
         for control in controls.0.into_iter() {
             if control.bad_network.is_some() {
                 // TODO: handle for bad network quality
@@ -95,7 +95,7 @@ impl<'e> TryFrom<&'e [u8]> for Controls<'e> {
         let mut flag = unsafe { *value.get_unchecked(0) };
 
         loop {
-            tracing::info!("serializing next flag : {flag}");
+            tracing::debug!("serializing next flag : {flag}");
             let number = flag & 0b00001111;
 
             let ack = ((flag & 0b00100000) >> 5).eq(&1);

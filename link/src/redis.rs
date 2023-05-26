@@ -64,7 +64,7 @@ impl Client {
     }
 
     pub(crate) async fn heartbeat(&self, pin: String) -> anyhow::Result<()> {
-        tracing::info!("[{pin}] heartbeat");
+        tracing::debug!("[{pin}] heartbeat");
         self.inner
             .set(
                 format!("{}:{pin}", Self::HEARTBEAT_KEY),
