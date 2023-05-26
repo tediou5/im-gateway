@@ -79,7 +79,10 @@ pub(crate) fn process(
     let (tcp_collect, tcp_sender) = local_sync::mpsc::unbounded::channel::<SenderEvent>();
     let mut tcp_sender = local_sync::stream_wrappers::unbounded::ReceiverStream::new(tcp_sender);
 
-    let (mut sink, ack_window) = handle(stream, tx.clone(), pin.clone());
+    let (close, read_close_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let mut retry_close_rx = close.subscribe();
+
+    let (mut sink, ack_window) = handle(pin.clone(), stream, tx.clone(), read_close_rx);
 
     // send auth message first, auth message alse need ack.
     let auth_message: Vec<u8> = auth_message.to_vec().unwrap();
@@ -124,7 +127,11 @@ pub(crate) fn process(
         let pin_c = pin.to_string();
         tokio::task::spawn_local(async move {
             'retry: loop {
-                let retry = ack_windows.try_again().await;
+                let retry = tokio::select! {
+                    retry = ack_windows.try_again() => retry,
+                    _ = retry_close_rx.recv() => break,
+                };
+    
                 let retry_timeout = match super::ack_window::AckWindow::<u64>::get_retry_timeout(retry.times, *timeout, *max_times)
                 {
                     Ok(timeout) => timeout,
@@ -147,13 +154,19 @@ pub(crate) fn process(
         use futures::SinkExt as _;
         use tokio_stream::StreamExt as _;
 
-        while let Some(event) = tcp_sender.next().await &&
-        let SenderEvent::WriteBatch(message) = event {
-            if sink.send(message).await.is_err() {
-                break;
+        while let Some(event) = tcp_sender.next().await {
+            match event {
+                SenderEvent::WriteBatch(message) => {
+                    if sink.send(message).await.is_err() {
+                        break;
+                    }
+                }
+                SenderEvent::Close => break,
             }
         }
 
+        // close read task & retry task
+        let _ = close.send(());
         tracing::error!("[{pin}] tcp closed");
         let _ = sink.close().await;
 
@@ -165,9 +178,10 @@ pub(crate) fn process(
 
 /// handle spawn a new task, read the request through the tcpStream, then send response to channel tx
 fn handle(
+    pin: std::rc::Rc<String>,
     stream: tokio::net::TcpStream,
     tx: Sender,
-    pin: std::rc::Rc<String>,
+    mut read_close_rx: tokio::sync::broadcast::Receiver<()>,
 ) -> (
     futures::stream::SplitSink<
         tokio_util::codec::Framed<tokio::net::TcpStream, crate::linker::protocol::ControlCodec>,
@@ -190,13 +204,19 @@ fn handle(
 
     let ack_window_c = ack_window.clone();
     tokio::task::spawn_local(async move {
-        while let Some(control) = stream.next().await {
+        loop {
+            let control = tokio::select! {
+                Some(control) = stream.next() => control,
+                _ = read_close_rx.recv() => break,
+            };
+
             if let Ok(control) = control &&
             let Err(e) = control.process(pin.as_str(), &ack_window_c,).await {
                 tracing::error!("tcp error: control protocol process error: {e}");
                 break;
             }
-        }
+        };
+
         tracing::error!("Tcp: [{pin}] read error.");
         let _ = tx.send(Event::Close);
     });

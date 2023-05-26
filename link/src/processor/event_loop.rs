@@ -118,22 +118,24 @@ async fn process(
                 .entry(pin)
                 .or_insert_with_key(|pin| crate::linker::User::from_pin(pin.clone()));
 
-            user_connection.update(login);
+            let is_update = user_connection.update(login);
 
             let mut regiest_chats = Vec::new();
 
-            for chat in chat_list {
-                let member = chats.entry(chat.to_string()).or_insert_with_key(|chat| {
-                    regiest_chats.push(chat.to_string());
-                    Default::default()
+            if !is_update {
+                for chat in chat_list {
+                    let member = chats.entry(chat.to_string()).or_insert_with_key(|chat| {
+                        regiest_chats.push(chat.to_string());
+                        Default::default()
+                    });
+                    member.insert(user_connection.clone());
+                }
+                tokio::task::spawn_local(async move {
+                    let redis_client = crate::REDIS_CLIENT.get().unwrap();
+                    redis_client.regist(regiest_chats).await?;
+                    Ok::<(), anyhow::Error>(())
                 });
-                member.insert(user_connection.clone());
             }
-            tokio::task::spawn_local(async move {
-                let redis_client = crate::REDIS_CLIENT.get().unwrap();
-                redis_client.regist(regiest_chats).await?;
-                Ok::<(), anyhow::Error>(())
-            });
         }
         Event::Private(pin, message) => {
             if let Some(sender) = users.get_mut(&pin) {

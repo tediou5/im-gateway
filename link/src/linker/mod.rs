@@ -65,8 +65,8 @@ impl User {
         }
     }
 
-    // TODO: handle socket stream here
-    pub(crate) fn update(&self, login: Login) {
+    // TODO: handle socket stream here, return true is update
+    pub(crate) fn update(&self, login: Login) -> bool {
         let Login {
             platform,
             auth_message,
@@ -77,6 +77,7 @@ impl User {
                 if let Some(old) = self.app.replace(Some(sender)) {
                     tracing::error!("{}: remove old > app < connection", self.pin.as_str());
                     let _ = old.send(tcp::Event::Close);
+                    return true;
                 };
             }
             Platform::Pc(stream) => {
@@ -84,6 +85,7 @@ impl User {
                 if let Some(old) = self.pc.replace(Some(sender)) {
                     tracing::error!("{}: remove old > pc < connection", self.pin.as_str());
                     let _ = old.send(tcp::Event::Close);
+                    return true;
                 };
             }
             Platform::Web(socket) => {
@@ -91,9 +93,11 @@ impl User {
                 if let Some(old) = self.web.replace(Some(sender)) {
                     tracing::error!("{}: remove old > web < connection", self.pin.as_str());
                     let _ = old.send(websocket::Event::Close);
+                    return true;
                 };
             }
         }
+        false
     }
 
     pub(crate) fn send(

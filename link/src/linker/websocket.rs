@@ -56,10 +56,14 @@ pub(crate) fn process(
 ) -> Sender {
     let (tx, rx) = local_sync::mpsc::unbounded::channel::<Event>();
     let mut rx = local_sync::stream_wrappers::unbounded::ReceiverStream::new(rx);
-    let (mut write, ack_window) = handle(socket, tx.clone(), pin.clone());
 
     let (ws_collect, ws_sender) = local_sync::mpsc::unbounded::channel::<SenderEvent>();
     let mut ws_sender = local_sync::stream_wrappers::unbounded::ReceiverStream::new(ws_sender);
+
+    let (close, read_close_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let mut retry_close_rx = close.subscribe();
+
+    let (mut write, ack_window) = handle(pin.clone(), socket, tx.clone(), read_close_rx);
 
     // FIXME: maybe panic if auth_message serialize  error.
     let auth_message: Vec<u8> = auth_message.to_vec().unwrap();
@@ -104,7 +108,11 @@ pub(crate) fn process(
         let pin_c = pin.to_string();
         tokio::task::spawn_local(async move {
             'retry: loop {
-                let retry = ack_windows.try_again().await;
+                let retry = tokio::select! {
+                    retry = ack_windows.try_again() => retry,
+                    _ = retry_close_rx.recv() => break,
+                };
+
                 let retry_timeout = match crate::linker::ack_window::AckWindow::<u64>::get_retry_timeout(retry.times, *timeout, *max_times)
                 {
                     Ok(timeout) => timeout,
@@ -149,6 +157,8 @@ pub(crate) fn process(
             };
         }
 
+        // close read task & retry task
+        let _ = close.send(());
         tracing::error!("[{pin}] websocket closed");
         let _ = write.close().await;
     });
@@ -157,9 +167,10 @@ pub(crate) fn process(
 }
 
 fn handle(
+    pin: std::rc::Rc<String>,
     socket: axum::extract::ws::WebSocket,
     tx: Sender,
-    pin: std::rc::Rc<String>,
+    mut read_close_rx: tokio::sync::broadcast::Receiver<()>,
 ) -> (
     futures::stream::SplitSink<axum::extract::ws::WebSocket, axum::extract::ws::Message>,
     Option<super::ack_window::AckWindow<u64>>,
@@ -173,11 +184,15 @@ fn handle(
 
     use futures::StreamExt as _;
 
-    let (sink, mut input) = socket.split();
+    let (sink, mut stream) = socket.split();
 
     let ack_window_c = ack_window.clone();
     tokio::task::spawn_local(async move {
-        while let Some(Ok(message)) = input.next().await {
+        loop {
+            let message = tokio::select! {
+                Some(Ok(message)) = stream.next() => message,
+                _ = read_close_rx.recv() => break,
+            };
             match message {
                 axum::extract::ws::Message::Close(_close) => {
                     break;
