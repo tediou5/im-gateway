@@ -117,6 +117,18 @@ impl tokio_util::codec::Decoder for ControlCodec {
                     return Err(anyhow::anyhow!("PackageNumberMustBeOne: {number:?}"));
                 };
 
+                if (src.len() as u16) < 11 {
+                    // The full string has not yet arrived.
+                    //
+                    // We reserve more space in the buffer. This is not strictly
+                    // necessary, but is a good idea performance-wise.
+                    src.reserve(11 - src.len());
+
+                    // We inform the Framed that we need more bytes to form the next
+                    // frame.
+                    return Ok(None);
+                }
+
                 let mut length_bytes = [0u8; 2];
                 length_bytes.copy_from_slice(&src[1..3]);
                 let length = u16::from_be_bytes(length_bytes);
