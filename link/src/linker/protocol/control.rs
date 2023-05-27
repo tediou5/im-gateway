@@ -276,6 +276,7 @@ mod test {
         let mut dst = bytes::BytesMut::from(heartbeat.as_slice());
         let heartbeat = ControlCodec.decode(&mut dst).unwrap().unwrap();
         println!("heartbeat: {heartbeat:?}");
+        assert!(heartbeat.heartbeat.is_some())
     }
 
     #[test]

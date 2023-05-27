@@ -126,7 +126,7 @@ pub(crate) fn process(
                 }
                 tokio::time::sleep(tokio::time::Duration::from_millis(retry_timeout)).await;
             }
-            tracing::error!("[{pin_c}]tcp retry error, close connection");
+            tracing::error!("[{pin_c}]websocket retry error, close connection");
             let _ = ws_collect.send(SenderEvent::Close);
         });
     }

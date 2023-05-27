@@ -158,7 +158,7 @@ async fn init() -> anyhow::Result<()> {
             let keep_alive = socket2::TcpKeepalive::new()
                 .with_time(std::time::Duration::from_secs(5))
                 .with_interval(std::time::Duration::from_secs(1))
-                .with_retries(3);
+                ;
             socket
                 .set_tcp_keepalive(&keep_alive)
                 .map_err(|e| format!("set keep alive error: {e}"))

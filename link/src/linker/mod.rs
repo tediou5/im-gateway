@@ -36,22 +36,7 @@ impl Eq for User {}
 
 impl PartialEq for User {
     fn eq(&self, other: &Self) -> bool {
-        let app_eq = match (self.app.borrow().as_ref(), other.app.borrow().as_ref()) {
-            (None, None) => true,
-            (Some(s), Some(o)) => s.same_channel(o),
-            (None, Some(_)) | (Some(_), None) => false,
-        };
-        let web_eq = match (self.web.borrow().as_ref(), other.web.borrow().as_ref()) {
-            (None, None) => true,
-            (Some(s), Some(o)) => s.same_channel(o),
-            (None, Some(_)) | (Some(_), None) => false,
-        };
-        let pc_eq = match (self.pc.borrow().as_ref(), other.pc.borrow().as_ref()) {
-            (None, None) => true,
-            (Some(s), Some(o)) => s.same_channel(o),
-            (None, Some(_)) | (Some(_), None) => false,
-        };
-        app_eq && web_eq && pc_eq
+        self.pin.as_str() == other.pin.as_str()
     }
 }
 

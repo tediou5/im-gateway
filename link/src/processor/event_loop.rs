@@ -105,13 +105,12 @@ async fn process(
     id_worker: &mut crate::snowflake::SnowflakeIdWorkerInner,
     event: Event,
 ) -> anyhow::Result<()> {
-    tracing::debug!(">>>>>>>>> {name} <<<<<<<<<");
     match event {
         Event::Login(pin, chat_list, login) => {
             let pin = std::rc::Rc::new(pin);
             if let Some(redis) = crate::REDIS_CLIENT.get() {
                 if let Err(e) = redis.heartbeat(pin.to_string()).await {
-                    tracing::error!("update [{pin}] heartbeat error: {}", e)
+                    tracing::error!(">>>{name}<<<\nupdate [{pin}] heartbeat error: {}", e)
                 };
             }
             let user_connection = users
@@ -139,12 +138,12 @@ async fn process(
         }
         Event::Private(pin, message) => {
             if let Some(sender) = users.get_mut(&pin) {
-                tracing::debug!("send user: {pin}");
+                tracing::debug!(">>>{name}<<<\nsend user: {pin}");
                 let (trace_id, message) =
                     crate::linker::Content::pack_message(&message, id_worker)?;
                 let message = std::rc::Rc::new(message);
                 if sender.send(trace_id, &message).is_err() {
-                    tracing::debug!("remove user: {pin}");
+                    tracing::debug!(">>>{name}<<<\nremove offline user: {pin}");
                     users.remove(&pin);
                 };
             }
@@ -163,7 +162,10 @@ async fn process(
                     crate::linker::Content::pack_message(&message, id_worker)?;
                 let message = std::rc::Rc::new(message);
 
-                tracing::debug!("send group: <{chat}>: {} message", recv_list.len());
+                tracing::debug!(
+                    ">>>{name}<<<\nsend group: <{chat}>: {:?} message",
+                    recv_list
+                );
 
                 for one in recv_list.iter() {
                     if one.send(trace_id, &message).is_err() {
@@ -176,11 +178,11 @@ async fn process(
         }
         Event::Chat(crate::processor::chat::Action::Leave(chat, members)) => {
             if let Some(online) = chats.get_mut(&chat.to_string()) {
-                tracing::debug!("try leave {members:?} from <{chat}>: {online:?}");
+                tracing::debug!(">>>{name}<<<\ntry leave {members:?} from <{chat}>: {online:?}");
                 for member in members.iter() {
                     if let Some(user) = users.get(member) {
                         if online.remove(user) {
-                            tracing::debug!("leave {member} from <{chat}>")
+                            tracing::debug!(">>>{name}<<<\nleave {member} from <{chat}>")
                         };
                     };
                 }
@@ -189,7 +191,7 @@ async fn process(
         Event::Chat(crate::processor::chat::Action::Join(chat, members)) => {
             let members = _join(users, members);
             if !members.is_empty() {
-                tracing::debug!("add {members:?} into [{chat}]");
+                tracing::debug!(">>>{name}<<<\nadd {members:?} into [{chat}]");
                 let online = chats.entry(chat.to_string()).or_default();
                 if online.is_empty() {
                     if let Some(redis_client) = crate::REDIS_CLIENT.get() {
@@ -203,14 +205,14 @@ async fn process(
             }
         }
         Event::Chat(super::chat::Action::Notice(chat, message)) => {
-            tracing::debug!("send notice to [{chat}]");
+            tracing::debug!(">>>{name}<<<\nsend notice to [{chat}]");
             if let Some(online) = chats.get_mut(&chat.to_string()) {
-                tracing::debug!("[{chat}] with online members: {online:?}");
+                tracing::debug!(">>>{name}<<<\n[{chat}] with online members: {online:?}");
                 let (trace_id, message) =
                     crate::linker::Content::pack_message(&message, id_worker)?;
                 let message = std::rc::Rc::new(message);
 
-                tracing::debug!("send group [{}] message", online.len());
+                tracing::debug!(">>>{name}<<<\nsend group [{}] message", online.len());
 
                 online.retain(|one| {
                     one.send(trace_id, &message)
@@ -223,7 +225,6 @@ async fn process(
             };
         }
     }
-    tracing::debug!("--------- end {name} ---------");
     Ok(())
 }
 
