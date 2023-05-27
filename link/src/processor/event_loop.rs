@@ -3,7 +3,6 @@ pub(super) enum Event {
         String,                      /* pin */
         Vec<std::sync::Arc<String>>, /* chats */
         crate::linker::Login,
-        // crate::linker::Platform,
     ),
     Private(String /* recv */, std::sync::Arc<Vec<u8>>),
     Group(
@@ -14,10 +13,6 @@ pub(super) enum Event {
     Chat(super::chat::Action),
 }
 
-// pub(super) enum SystemEvent {
-
-// }
-
 #[derive(Clone)]
 pub(super) struct EventLoop {
     name: std::rc::Rc<String>,
@@ -27,6 +22,222 @@ pub(super) struct EventLoop {
 impl crate::conhash::Node for EventLoop {
     fn name(&self) -> String {
         self.name.to_string()
+    }
+}
+
+struct InnerData {
+    name: String,
+    users: ahash::AHashMap<std::rc::Rc<String>, crate::linker::User>,
+    chats: ahash::AHashMap<String, std::collections::HashSet<crate::linker::User>>,
+    id_worker: crate::snowflake::SnowflakeIdWorkerInner,
+}
+
+impl std::fmt::Debug for InnerData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InnerData")
+            .field("name", &self.name)
+            .field("users", &self.users)
+            .field("chats", &self.chats)
+            .finish()
+    }
+}
+
+impl InnerData {
+    fn new(name: String, worker_id: u128) -> InnerData {
+        let users: ahash::AHashMap<std::rc::Rc<String>, crate::linker::User> =
+            ahash::AHashMap::new();
+        let chats: ahash::AHashMap<String, std::collections::HashSet<crate::linker::User>> =
+            ahash::AHashMap::new();
+        let id_worker = crate::snowflake::SnowflakeIdWorkerInner::new(
+            worker_id % crate::snowflake::MAX_WORKER_ID,
+            1,
+        )
+        .unwrap();
+        Self {
+            name,
+            users,
+            chats,
+            id_worker,
+        }
+    }
+
+    fn login(
+        &mut self,
+        pin: String,
+        chat_list: Vec<std::sync::Arc<String>>,
+        connection: crate::linker::Login,
+    ) {
+        let pin = std::rc::Rc::new(pin);
+
+        let user_connection = self
+            .users
+            .entry(pin)
+            .or_insert_with_key(|pin| crate::linker::User::from_pin(pin.clone()))
+            .clone();
+
+        let is_update = user_connection.update(connection);
+
+        if !is_update {
+            self._login_chats(&user_connection, chat_list)
+        }
+    }
+
+    fn _login_chats(&mut self, user: &crate::linker::User, chat_list: Vec<std::sync::Arc<String>>) {
+        let mut regiest_chats = Vec::new();
+        for chat in chat_list {
+            let member = self
+                .chats
+                .entry(chat.to_string())
+                .or_insert_with_key(|chat| {
+                    regiest_chats.push(chat.to_string());
+                    Default::default()
+                });
+            member.insert(user.clone());
+        }
+        let pin = user.pin.clone();
+        tokio::task::spawn_local(async move {
+            let redis_client = crate::REDIS_CLIENT.get().unwrap();
+            redis_client.regist(regiest_chats).await?;
+            redis_client.heartbeat(pin.to_string()).await?;
+            Ok::<(), anyhow::Error>(())
+        });
+    }
+
+    fn private(&mut self, pin: String, message: std::sync::Arc<Vec<u8>>) -> anyhow::Result<()> {
+        if let Some(sender) = self.users.get_mut(&pin) {
+            tracing::debug!(">>>{}<<<\nsend user: {pin}", self.name);
+            let (trace_id, message) =
+                crate::linker::Content::pack_message(&message, &mut self.id_worker)?;
+            let message = std::rc::Rc::new(message);
+            if sender.send(trace_id, &message).is_err() {
+                tracing::debug!(">>>{}<<<\nremove offline user: {pin}", self.name);
+                self.users.remove(&pin);
+            };
+        }
+        Ok(())
+    }
+
+    fn group(
+        &mut self,
+        chat: String,
+        exclusions: std::collections::HashSet<String>,
+        message: std::sync::Arc<Vec<u8>>,
+    ) -> anyhow::Result<()> {
+        if let Some(online) = self.chats.get_mut(&chat) {
+            let exclusions: std::collections::HashSet<_> = exclusions
+                .iter()
+                .filter_map(|exc| self.users.get(exc).cloned())
+                .collect();
+
+            let recv_list: std::collections::HashSet<crate::linker::User> =
+                online.difference(&exclusions).map(Clone::clone).collect();
+
+            let (trace_id, message) =
+                crate::linker::Content::pack_message(&message, &mut self.id_worker)?;
+            let message = std::rc::Rc::new(message);
+
+            tracing::debug!(
+                ">>>{}<<<\nsend group: <{chat}>: {:?} message",
+                self.name,
+                recv_list
+            );
+
+            for one in recv_list.iter() {
+                if one.send(trace_id, &message).is_err() {
+                    self.users.remove(one.pin.as_ref());
+                    online.remove(one);
+                    one.close()
+                }
+            }
+        };
+        Ok(())
+    }
+
+    fn chat_notice(
+        &mut self,
+        chat: std::sync::Arc<String>,
+        message: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        if let Some(online) = self.chats.get_mut(&chat.to_string()) {
+            tracing::debug!(
+                ">>>{}<<<\n[{chat}] with online members: {online:?}",
+                self.name
+            );
+            let (trace_id, message) =
+                crate::linker::Content::pack_message(&message, &mut self.id_worker).unwrap();
+            let message = std::rc::Rc::new(message);
+
+            tracing::debug!(">>>{}<<<\nsend group [{}] message", self.name, online.len());
+
+            online.retain(|one| {
+                one.send(trace_id, &message)
+                    .inspect_err(|_e| {
+                        self.users.remove(one.pin.as_ref());
+                        one.close()
+                    })
+                    .is_ok()
+            });
+        };
+        Ok(())
+    }
+
+    fn leave_chat(
+        &mut self,
+        chat: std::sync::Arc<String>,
+        members: std::collections::HashSet<String>,
+    ) {
+        if let Some(online) = self.chats.get_mut(&chat.to_string()) {
+            tracing::debug!(
+                ">>>{}<<<\ntry leave {members:?} from <{chat}>: {online:?}",
+                self.name
+            );
+            for member in members.iter() {
+                if let Some(user) = self.users.get(member) {
+                    if online.remove(user) {
+                        tracing::debug!(">>>{}<<<\nleave {member} from <{chat}>", self.name)
+                    };
+                };
+            }
+        }
+    }
+
+    fn join_chat(
+        &mut self,
+        chat: std::sync::Arc<String>,
+        members: std::collections::HashSet<String>,
+    ) {
+        let members = self._join_keys(members);
+        if !members.is_empty() {
+            tracing::debug!(">>>{}<<<\nadd {members:?} into [{chat}]", self.name);
+            let online = self.chats.entry(chat.to_string()).or_default();
+            if online.is_empty() {
+                if let Some(redis_client) = crate::REDIS_CLIENT.get() {
+                    tokio::task::spawn_local(async move {
+                        redis_client
+                            .regist(vec![chat.to_string()])
+                            .await
+                            .inspect_err(|e| tracing::error!("regist error: {e}"))
+                            .unwrap();
+                    });
+                }
+            }
+            members.into_iter().collect_into(online);
+        }
+    }
+
+    fn _join_keys(
+        &self,
+        members: std::collections::HashSet<String>,
+    ) -> std::collections::HashSet<crate::linker::User> {
+        let mut users_keys: std::collections::HashSet<crate::linker::User> =
+            std::collections::HashSet::new();
+        for member in members {
+            if let Some((_, user)) = self.users.get_key_value(&member) {
+                users_keys.insert(user.clone());
+            }
+        }
+
+        users_keys
     }
 }
 
@@ -57,28 +268,10 @@ pub(super) fn run(core_id: core_affinity::CoreId) -> EventLoop {
             tokio::task::spawn_local(async move {
                 use tokio_stream::StreamExt as _;
 
-                let mut users: ahash::AHashMap<std::rc::Rc<String>, crate::linker::User> =
-                    ahash::AHashMap::new();
-                let mut chats: ahash::AHashMap<
-                    String,
-                    std::collections::HashSet<crate::linker::User>,
-                > = ahash::AHashMap::new();
-                let mut id_worker = crate::snowflake::SnowflakeIdWorkerInner::new(
-                    id as u128 % crate::snowflake::MAX_WORKER_ID,
-                    1,
-                )
-                .unwrap();
+                let mut inner = InnerData::new(name_c, id as u128);
 
                 while let Some(event) = collect_rx.next().await {
-                    if let Err(e) = process(
-                        name_c.as_str(),
-                        &mut users,
-                        &mut chats,
-                        &mut id_worker,
-                        event,
-                    )
-                    .await
-                    {
+                    if let Err(e) = process(&mut inner, event).await {
                         // TODO: handle error
                         tracing::info!("preocess event error: {e}");
                     }
@@ -98,131 +291,19 @@ pub(super) fn run(core_id: core_affinity::CoreId) -> EventLoop {
     }
 }
 
-async fn process(
-    name: &str,
-    users: &mut ahash::AHashMap<std::rc::Rc<String>, crate::linker::User>,
-    chats: &mut ahash::AHashMap<String, std::collections::HashSet<crate::linker::User>>,
-    id_worker: &mut crate::snowflake::SnowflakeIdWorkerInner,
-    event: Event,
-) -> anyhow::Result<()> {
+async fn process(inner: &mut InnerData, event: Event) -> anyhow::Result<()> {
     match event {
-        Event::Login(pin, chat_list, login) => {
-            let pin = std::rc::Rc::new(pin);
-            if let Some(redis) = crate::REDIS_CLIENT.get() {
-                if let Err(e) = redis.heartbeat(pin.to_string()).await {
-                    tracing::error!(">>>{name}<<<\nupdate [{pin}] heartbeat error: {}", e)
-                };
-            }
-            let user_connection = users
-                .entry(pin)
-                .or_insert_with_key(|pin| crate::linker::User::from_pin(pin.clone()));
-
-            let is_update = user_connection.update(login);
-
-            let mut regiest_chats = Vec::new();
-
-            if !is_update {
-                for chat in chat_list {
-                    let member = chats.entry(chat.to_string()).or_insert_with_key(|chat| {
-                        regiest_chats.push(chat.to_string());
-                        Default::default()
-                    });
-                    member.insert(user_connection.clone());
-                }
-                tokio::task::spawn_local(async move {
-                    let redis_client = crate::REDIS_CLIENT.get().unwrap();
-                    redis_client.regist(regiest_chats).await?;
-                    Ok::<(), anyhow::Error>(())
-                });
-            }
-        }
-        Event::Private(pin, message) => {
-            if let Some(sender) = users.get_mut(&pin) {
-                tracing::debug!(">>>{name}<<<\nsend user: {pin}");
-                let (trace_id, message) =
-                    crate::linker::Content::pack_message(&message, id_worker)?;
-                let message = std::rc::Rc::new(message);
-                if sender.send(trace_id, &message).is_err() {
-                    tracing::debug!(">>>{name}<<<\nremove offline user: {pin}");
-                    users.remove(&pin);
-                };
-            }
-        }
-        Event::Group(chat, exclusions, message) => {
-            if let Some(online) = chats.get_mut(&chat) {
-                let exclusions: std::collections::HashSet<_> = exclusions
-                    .iter()
-                    .filter_map(|exc| users.get(exc).cloned())
-                    .collect();
-
-                let recv_list: std::collections::HashSet<crate::linker::User> =
-                    online.difference(&exclusions).map(Clone::clone).collect();
-
-                let (trace_id, message) =
-                    crate::linker::Content::pack_message(&message, id_worker)?;
-                let message = std::rc::Rc::new(message);
-
-                tracing::debug!(
-                    ">>>{name}<<<\nsend group: <{chat}>: {:?} message",
-                    recv_list
-                );
-
-                for one in recv_list.iter() {
-                    if one.send(trace_id, &message).is_err() {
-                        users.remove(one.pin.as_ref());
-                        online.remove(one);
-                        one.close()
-                    }
-                }
-            };
-        }
+        Event::Login(pin, chat_list, login) => inner.login(pin, chat_list, login),
+        Event::Private(pin, message) => inner.private(pin, message)?,
+        Event::Group(chat, exclusions, message) => inner.group(chat, exclusions, message)?,
         Event::Chat(crate::processor::chat::Action::Leave(chat, members)) => {
-            if let Some(online) = chats.get_mut(&chat.to_string()) {
-                tracing::debug!(">>>{name}<<<\ntry leave {members:?} from <{chat}>: {online:?}");
-                for member in members.iter() {
-                    if let Some(user) = users.get(member) {
-                        if online.remove(user) {
-                            tracing::debug!(">>>{name}<<<\nleave {member} from <{chat}>")
-                        };
-                    };
-                }
-            }
+            inner.leave_chat(chat, members)
         }
         Event::Chat(crate::processor::chat::Action::Join(chat, members)) => {
-            let members = _join(users, members);
-            if !members.is_empty() {
-                tracing::debug!(">>>{name}<<<\nadd {members:?} into [{chat}]");
-                let online = chats.entry(chat.to_string()).or_default();
-                if online.is_empty() {
-                    if let Some(redis_client) = crate::REDIS_CLIENT.get() {
-                        redis_client
-                            .regist(vec![chat.to_string()])
-                            .await
-                            .inspect_err(|e| tracing::error!("regist error: {e}"))?;
-                    }
-                }
-                members.into_iter().collect_into(online);
-            }
+            inner.join_chat(chat, members)
         }
         Event::Chat(super::chat::Action::Notice(chat, message)) => {
-            tracing::debug!(">>>{name}<<<\nsend notice to [{chat}]");
-            if let Some(online) = chats.get_mut(&chat.to_string()) {
-                tracing::debug!(">>>{name}<<<\n[{chat}] with online members: {online:?}");
-                let (trace_id, message) =
-                    crate::linker::Content::pack_message(&message, id_worker)?;
-                let message = std::rc::Rc::new(message);
-
-                tracing::debug!(">>>{name}<<<\nsend group [{}] message", online.len());
-
-                online.retain(|one| {
-                    one.send(trace_id, &message)
-                        .inspect_err(|_e| {
-                            users.remove(one.pin.as_ref());
-                            one.close()
-                        })
-                        .is_ok()
-                });
-            };
+            inner.chat_notice(chat, message)?
         }
     }
     Ok(())
@@ -248,6 +329,8 @@ mod test {
     use crate::linker::User;
     use crate::processor::{event_loop::_join, Event};
     use std::{collections::HashSet, rc::Rc};
+
+    use super::InnerData;
 
     const HEX_STRING: &str = "7b2264617461223a207b22636861744964223a2022222c20226d7367466f726d6174223a202254455854222c20226d73674964223a20223261626665366266303331333461356238613831623262326531373236643461222c20226e6f7469636554797065223a2022555345525f424153455f494e464f222c2022626f6479223a20227b5c2261707049645c223a5c2253564f4148626c705c222c5c226176617461725c223a5c226176617461725c222c5c226973426f745c223a66616c73652c5c226e69636b6e616d655c223a5c227465737420757365725c222c5c2270696e5c223a5c2232663734393634616132383734663066383032613761323638653061653632375c222c5c227365785c223a66616c73652c5c227569645c223a5c22515245314c4f55425c227d222c2022636861744d736754797065223a20224e6f74696365222c202266726f6d4964223a20223266373439363461613238373466306638303261376132363865306165363237222c20226170704964223a202253564f4148626c70222c20226368617454797065223a202250726976617465222c202274696d657374616d70223a20313638323431373837323337367d2c202270726f746f636f6c223a20224d657373616765227d";
 
@@ -322,5 +405,39 @@ mod test {
             (uu4.clone(), User::from_pin(uu4.clone())),
             (uu5.clone(), User::from_pin(uu5.clone())),
         ])
+    }
+
+    #[test]
+    fn login() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let local = tokio::task::LocalSet::new();
+        let local_set = local.run_until(async {
+            let mut inner = InnerData::new("test".to_string(), 0);
+
+            let pin = "pin".to_string().into();
+            let login = crate::linker::User::from_pin(pin);
+            let mut chat_list = vec![
+                std::sync::Arc::new("cc1".to_string()),
+                std::sync::Arc::new("cc2".to_string()),
+            ];
+            inner._login_chats(&login, chat_list.clone());
+            assert!(inner.chats.len() == 2);
+            inner._login_chats(
+                &login,
+                vec![
+                    std::sync::Arc::new("cc1".to_string()),
+                    std::sync::Arc::new("cc2".to_string()),
+                ],
+            );
+            assert!(inner.chats.len() == 2);
+            chat_list.push(std::sync::Arc::new("cc3".to_string()));
+            inner._login_chats(&login, chat_list.clone());
+            assert!(inner.chats.len() == 3);
+        });
+
+        rt.block_on(local_set)
     }
 }
