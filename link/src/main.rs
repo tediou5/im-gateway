@@ -22,8 +22,9 @@ mod socket_addr;
 
 use once_cell::sync::OnceCell;
 
-static HTTP_CLIENT: OnceCell<reqwest::Client> = OnceCell::new();
 static TCP_CONFIG: OnceCell<config::Tcp> = OnceCell::new();
+static HTTP_CLIENT: OnceCell<reqwest::Client> = OnceCell::new();
+static RETRY_CONFIG: OnceCell<config::Retry> = OnceCell::new();
 
 static DISPATCHER: OnceCell<tokio::sync::mpsc::Sender<processor::Event>> = OnceCell::new();
 static REDIS_CLIENT: OnceCell<redis::Client> = OnceCell::new();
@@ -56,20 +57,13 @@ async fn init() -> anyhow::Result<()> {
     let args = <Args as clap::Parser>::parse();
     let config = config::Config::init(args.config.unwrap_or("./config.toml".to_string()));
 
-    let tcp_listener = tokio::net::TcpListener::bind(config.get_tcp_addr_str()).await?;
-
     let client = reqwest::Client::new();
-    // AUTH_URL.set(config.tcp.auth).unwrap();
-    HTTP_CLIENT.set(client).unwrap();
-    if let Some(ref tcp_retry) = config.tcp.retry {
-        println!("set tcp retry: {tcp_retry:?}");
-    } else {
-        eprintln!("tcp do not retry any more");
-    }
-
-    TCP_CONFIG.set(config.tcp).unwrap();
-
+    let tcp_listener = tokio::net::TcpListener::bind(config.get_tcp_addr_str()).await?;
     let redis_client = redis::Client::new(local_addr.to_string(), config.redis).await?;
+
+    HTTP_CLIENT.set(client).unwrap();
+    RETRY_CONFIG.set(config.retry).unwrap();
+    TCP_CONFIG.set(config.tcp).unwrap();
     REDIS_CLIENT.set(redis_client).unwrap();
     println!("starting redis client");
 
@@ -156,9 +150,8 @@ async fn init() -> anyhow::Result<()> {
             let stream = stream.into_std().unwrap();
             let socket = socket2::Socket::from(stream);
             let keep_alive = socket2::TcpKeepalive::new()
-                .with_time(std::time::Duration::from_secs(5))
-                .with_interval(std::time::Duration::from_secs(1))
-                ;
+                .with_time(std::time::Duration::from_secs(20))
+                .with_interval(std::time::Duration::from_secs(5));
             socket
                 .set_tcp_keepalive(&keep_alive)
                 .map_err(|e| format!("set keep alive error: {e}"))

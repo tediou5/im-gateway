@@ -92,7 +92,7 @@ async fn dispatch(
             }
         }
         Event::Group(chat, exclusions, message) => {
-            tracing::debug!("send group message to {chat:?}");
+            tracing::debug!("send group message to {chat:?}, exclusions: {exclusions:?}");
             let message = std::sync::Arc::new(message);
             for event_loop in event_loops {
                 if let Err(e) = event_loop

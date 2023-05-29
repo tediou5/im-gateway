@@ -37,7 +37,7 @@ impl Control {
     pub(crate) async fn process(
         self,
         pin: &str,
-        ack_window: &Option<crate::linker::ack_window::AckWindow<u64>>,
+        ack_window: &crate::linker::ack_window::AckWindow,
     ) -> anyhow::Result<()> {
         if self.bad_network.is_some() {
             // TODO: handle for bad network quality
@@ -56,11 +56,7 @@ impl Control {
         };
 
         match self.event {
-            crate::linker::protocol::control::Event::Ack(trace_id) => {
-                if let Some(ref ack_window) = ack_window {
-                    ack_window.ack(pin, trace_id);
-                };
-            }
+            crate::linker::protocol::control::Event::Ack(trace_id) => ack_window.ack(pin, trace_id),
             crate::linker::protocol::control::Event::Package(_len, _trace_id, pkg) => {
                 // TODO: not returned ack to the front end now.
                 let kafka = crate::KAFKA_CLIENT.get().unwrap();
@@ -97,7 +93,7 @@ impl tokio_util::codec::Decoder for ControlCodec {
     type Error = anyhow::Error;
 
     fn decode(&mut self, src: &mut bytes::BytesMut) -> anyhow::Result<Option<Self::Item>> {
-        if src.len() < 1 {
+        if src.is_empty() {
             // Not enough data to read header marker.
             return Ok(None);
         }

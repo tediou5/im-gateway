@@ -1,10 +1,24 @@
-pub(crate) use protocol::content::Content;
-
 mod ack_window;
 mod auth;
 mod protocol;
 pub(crate) mod tcp;
 pub(crate) mod websocket;
+
+pub(crate) use protocol::content::Content;
+
+pub(crate) type Sender = local_sync::mpsc::unbounded::Tx<Event>;
+
+#[derive(Debug, Clone)]
+pub(crate) enum Event {
+    WriteBatch(u64, std::rc::Rc<Vec<u8>>),
+    Close,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum SenderEvent {
+    WriteBatch(std::rc::Rc<Vec<u8>>),
+    Close,
+}
 
 pub(crate) struct Login {
     platform: Platform,
@@ -18,12 +32,11 @@ pub(crate) enum Platform {
     Web(axum::extract::ws::WebSocket),
 }
 
-#[derive(Clone)]
 pub(crate) struct User {
     pub(crate) pin: std::rc::Rc<String>,
-    pub(crate) pc: std::rc::Rc<std::cell::RefCell<Option<tcp::Sender>>>,
-    pub(crate) app: std::rc::Rc<std::cell::RefCell<Option<tcp::Sender>>>,
-    pub(crate) web: std::rc::Rc<std::cell::RefCell<Option<websocket::Sender>>>,
+    pub(crate) pc: Option<Sender>,
+    pub(crate) app: Option<Sender>,
+    pub(crate) web: Option<Sender>,
 }
 
 impl std::fmt::Debug for User {
@@ -50,14 +63,14 @@ impl User {
     pub(crate) fn from_pin(pin: std::rc::Rc<String>) -> Self {
         Self {
             pin,
-            app: std::rc::Rc::new(std::cell::RefCell::new(None)),
-            web: std::rc::Rc::new(std::cell::RefCell::new(None)),
-            pc: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            app: None,
+            web: None,
+            pc: None,
         }
     }
 
     // TODO: handle socket stream here, return true is update
-    pub(crate) fn update(&self, login: Login) -> bool {
+    pub(crate) fn update(&mut self, login: Login) -> bool {
         let Login {
             platform,
             auth_message,
@@ -65,25 +78,25 @@ impl User {
         match platform {
             Platform::App(stream) => {
                 let sender = tcp::process(stream, self.pin.clone(), auth_message);
-                if let Some(old) = self.app.replace(Some(sender)) {
+                if let Some(old) = self.app.replace(sender) {
                     tracing::error!("{}: remove old > app < connection", self.pin.as_str());
-                    let _ = old.send(tcp::Event::Close);
+                    let _ = old.send(Event::Close);
                     return true;
                 };
             }
             Platform::Pc(stream) => {
                 let sender = tcp::process(stream, self.pin.clone(), auth_message);
-                if let Some(old) = self.pc.replace(Some(sender)) {
+                if let Some(old) = self.pc.replace(sender) {
                     tracing::error!("{}: remove old > pc < connection", self.pin.as_str());
-                    let _ = old.send(tcp::Event::Close);
+                    let _ = old.send(Event::Close);
                     return true;
                 };
             }
             Platform::Web(socket) => {
                 let sender = websocket::process(socket, self.pin.clone(), auth_message);
-                if let Some(old) = self.web.replace(Some(sender)) {
+                if let Some(old) = self.web.replace(sender) {
                     tracing::error!("{}: remove old > web < connection", self.pin.as_str());
-                    let _ = old.send(websocket::Event::Close);
+                    let _ = old.send(Event::Close);
                     return true;
                 };
             }
@@ -92,37 +105,38 @@ impl User {
     }
 
     pub(crate) fn send(
-        &self,
+        &mut self,
         trace_id: u64,
         message_bytes: &std::rc::Rc<Vec<u8>>,
     ) -> anyhow::Result<()> {
         let mut flag = 0;
 
-        let mut app = self.app.borrow_mut();
-        if let Some(sender) = app.as_ref().inspect(|_|flag += 1) &&
-        let Err(_) = sender.send(tcp::Event::WriteBatch(trace_id, message_bytes.clone())) {
+        if let Some(sender) = self.app.as_ref().inspect(|_|flag += 1) &&
+        let Err(_) = sender.send(Event::WriteBatch(trace_id, message_bytes.clone())) {
             tracing::error!("{}: app send failed", self.pin);
-            app.take();
+            let _ = sender.send(Event::Close);
+            self.app = None;
             flag -= 1;
         };
 
-        let mut pc = self.pc.borrow_mut();
-        if let Some(sender) = pc.as_ref().inspect(|_|flag += 1) &&
-        let Err(_) = sender.send(tcp::Event::WriteBatch(trace_id, message_bytes.clone())) {
+        if let Some(sender) = self.pc.as_ref().inspect(|_|flag += 1) &&
+        let Err(_) = sender.send(Event::WriteBatch(trace_id, message_bytes.clone())) {
             tracing::error!("{}: pc send failed", self.pin);
-            pc.take();
+            let _ = sender.send(Event::Close);
+            self.app = None;
             flag -= 1;
         };
 
-        let mut web = self.web.borrow_mut();
-        if let Some(sender) = web.as_ref().inspect(|_|flag += 1) &&
-        let Err(_) = sender.send(websocket::Event::WriteBatch(trace_id, message_bytes.clone())) {
+        if let Some(sender) = self.web.as_ref().inspect(|_|flag += 1) &&
+        let Err(_) = sender.send(Event::WriteBatch(trace_id, message_bytes.clone())) {
             tracing::error!("{}: web send failed", self.pin);
-            web.take();
+            let _ = sender.send(Event::Close);
+            self.app = None;
             flag -= 1;
         };
 
         if flag == 0 {
+            tracing::error!("{}: user all links has been disconnected ", self.pin);
             let pin = self.pin.clone();
             tokio::task::spawn_local(async move {
                 if let Some(redis) = crate::REDIS_CLIENT.get() {
@@ -134,21 +148,6 @@ impl User {
             Err(anyhow::anyhow!("user all links has been disconnected"))
         } else {
             Ok(())
-        }
-    }
-
-    pub(crate) fn close(&self) {
-        if let Some(sender) = self.app.borrow().as_ref()  &&
-        let Err(_e) = sender.send(tcp::Event::Close) {
-            // TODO:
-        }
-        if let Some(sender) = self.pc.borrow().as_ref()  &&
-        let Err(_e) = sender.send(tcp::Event::Close) {
-            // TODO:
-        }
-        if let Some(sender) = self.web.borrow().as_ref()  &&
-        let Err(_e) = sender.send(websocket::Event::Close) {
-            // TODO:
         }
     }
 }

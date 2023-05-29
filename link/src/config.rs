@@ -4,6 +4,7 @@ pub(crate) struct Config {
     pub(crate) http: Http,
     pub(crate) kafka: Kafka,
     pub(crate) redis: Redis,
+    pub(crate) retry: Retry,
 }
 
 impl Config {
@@ -21,7 +22,6 @@ impl Config {
 pub(crate) struct Tcp {
     pub(crate) port: u16,
     pub(crate) auth: String,
-    pub(crate) retry: Option<Retry>,
 }
 
 #[derive(serde_derive::Deserialize, Debug, Clone)]
