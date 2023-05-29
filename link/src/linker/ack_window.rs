@@ -108,7 +108,10 @@ impl AckWindow {
                 tokio::time::sleep(tokio::time::Duration::from_millis(retry_timeout)).await;
             }
             tracing::error!("[{pin}]retry error, close connection");
-            let _ = tcp_collect.send(crate::linker::SenderEvent::Close);
+            let _ = tcp_collect.send(crate::linker::SenderEvent::Close(
+                true,
+                "retry too many times".to_string(),
+            ));
         });
     }
 
@@ -126,15 +129,19 @@ impl AckWindow {
             while let Some(event) = event_rx.next().await {
                 let (trace_id, message) = match event {
                     crate::linker::Event::WriteBatch(trace_id, message) => (trace_id, message),
-                    crate::linker::Event::Close => {
-                        let _ = tcp_collect.send(crate::linker::SenderEvent::Close);
+                    crate::linker::Event::Close(need_reconnect, reason) => {
+                        let _ = tcp_collect
+                            .send(crate::linker::SenderEvent::Close(need_reconnect, reason));
                         return;
                     }
                 };
 
                 if let Err(e) = ack_window._acquire(pin.as_str(), trace_id, &message).await {
                     tracing::error!("acquire ack windows failed: {e}");
-                    let _ = tcp_collect.send(crate::linker::SenderEvent::Close);
+                    let _ = tcp_collect.send(crate::linker::SenderEvent::Close(
+                        true,
+                        "acquire task failed".to_string(),
+                    ));
                     return;
                 }
 

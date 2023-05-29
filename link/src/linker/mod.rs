@@ -4,20 +4,20 @@ mod protocol;
 pub(crate) mod tcp;
 pub(crate) mod websocket;
 
-pub(crate) use protocol::content::Content;
+pub(crate) use protocol::{content::Content, control::Control};
 
 pub(crate) type Sender = local_sync::mpsc::unbounded::Tx<Event>;
 
 #[derive(Debug, Clone)]
 pub(crate) enum Event {
     WriteBatch(u64, std::rc::Rc<Vec<u8>>),
-    Close,
+    Close(bool /* need_reconnect */, String /* reason */),
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum SenderEvent {
     WriteBatch(std::rc::Rc<Vec<u8>>),
-    Close,
+    Close(bool /* need_reconnect */, String /* reason */),
 }
 
 pub(crate) struct Login {
@@ -80,7 +80,7 @@ impl User {
                 let sender = tcp::process(stream, self.pin.clone(), auth_message);
                 if let Some(old) = self.app.replace(sender) {
                     tracing::error!("{}: remove old > app < connection", self.pin.as_str());
-                    let _ = old.send(Event::Close);
+                    let _ = old.send(Event::Close(false, "other device connected".to_string()));
                     return true;
                 };
             }
@@ -88,7 +88,7 @@ impl User {
                 let sender = tcp::process(stream, self.pin.clone(), auth_message);
                 if let Some(old) = self.pc.replace(sender) {
                     tracing::error!("{}: remove old > pc < connection", self.pin.as_str());
-                    let _ = old.send(Event::Close);
+                    let _ = old.send(Event::Close(false, "other device connected".to_string()));
                     return true;
                 };
             }
@@ -96,7 +96,7 @@ impl User {
                 let sender = websocket::process(socket, self.pin.clone(), auth_message);
                 if let Some(old) = self.web.replace(sender) {
                     tracing::error!("{}: remove old > web < connection", self.pin.as_str());
-                    let _ = old.send(Event::Close);
+                    let _ = old.send(Event::Close(false, "other device connected".to_string()));
                     return true;
                 };
             }
@@ -114,7 +114,6 @@ impl User {
         if let Some(sender) = self.app.as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(Event::WriteBatch(trace_id, message_bytes.clone())) {
             tracing::error!("{}: app send failed", self.pin);
-            let _ = sender.send(Event::Close);
             self.app = None;
             flag -= 1;
         };
@@ -122,7 +121,6 @@ impl User {
         if let Some(sender) = self.pc.as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(Event::WriteBatch(trace_id, message_bytes.clone())) {
             tracing::error!("{}: pc send failed", self.pin);
-            let _ = sender.send(Event::Close);
             self.app = None;
             flag -= 1;
         };
@@ -130,7 +128,6 @@ impl User {
         if let Some(sender) = self.web.as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(Event::WriteBatch(trace_id, message_bytes.clone())) {
             tracing::error!("{}: web send failed", self.pin);
-            let _ = sender.send(Event::Close);
             self.app = None;
             flag -= 1;
         };

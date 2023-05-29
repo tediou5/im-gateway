@@ -68,7 +68,14 @@ pub(crate) fn process(
 
         while let Some(event) = ws_sender.next().await {
             let content = match event {
-                crate::linker::SenderEvent::Close => break,
+                crate::linker::SenderEvent::Close(need_reconnect, reason) => {
+                    let _ = write
+                        .send(axum::extract::ws::Message::Binary(
+                            crate::linker::Control::new_disconnect_bytes(reason, need_reconnect),
+                        ))
+                        .await;
+                    break;
+                }
                 crate::linker::SenderEvent::WriteBatch(content) => content,
             };
 
@@ -117,7 +124,7 @@ fn handle(
     tokio::task::spawn_local(async move {
         loop {
             let control = tokio::select! {
-                _ = read_close_rx.recv() => break,
+                _ = read_close_rx.recv() => return,
                 control = stream.next() => control,
             };
 
@@ -147,8 +154,10 @@ fn handle(
             }
         }
         tracing::error!("websocket: [{pin}] read error.");
-        let _ = tx.send(crate::linker::Event::Close);
-        Ok::<(), anyhow::Error>(())
+        let _ = tx.send(crate::linker::Event::Close(
+            true,
+            "websocket read error".to_string(),
+        ));
     });
     (sink, ack_window)
 }

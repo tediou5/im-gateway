@@ -90,11 +90,20 @@ pub(crate) fn process(
                         break;
                     }
                 }
-                crate::linker::SenderEvent::Close => break,
+                crate::linker::SenderEvent::Close(need_reconnect, reason) => {
+                    let _ = sink
+                        .send(
+                            crate::linker::Control::new_disconnect_bytes(reason, need_reconnect)
+                                .into(),
+                        )
+                        .await;
+                    break;
+                }
             }
         }
 
         // close read task & retry task
+
         let _ = close.send(());
         tracing::error!("[{pin}] tcp closed");
         let _ = sink.close().await;
@@ -131,7 +140,7 @@ fn handle(
     tokio::task::spawn_local(async move {
         loop {
             let control = tokio::select! {
-                _ = read_close_rx.recv() => break,
+                _ = read_close_rx.recv() => return,
                 control = stream.next() => control,
             };
 
@@ -147,7 +156,10 @@ fn handle(
         }
 
         tracing::error!("Tcp: [{pin}] read error.");
-        let _ = tx.send(crate::linker::Event::Close);
+        let _ = tx.send(crate::linker::Event::Close(
+            true,
+            "tcp read error".to_string(),
+        ));
     });
 
     (sink, ack_window)
