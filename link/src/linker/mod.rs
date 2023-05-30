@@ -32,11 +32,50 @@ pub(crate) enum Platform {
     Web(axum::extract::ws::WebSocket),
 }
 
+struct Connection {
+    sender: Sender,
+    read_handler: tokio::task::JoinHandle<()>,
+    write_hander: tokio::task::JoinHandle<()>,
+}
+
+impl Connection {
+    fn new(
+        sender: Sender,
+        read_handler: tokio::task::JoinHandle<()>,
+        write_hander: tokio::task::JoinHandle<()>,
+    ) -> Self {
+        Self {
+            sender,
+            read_handler,
+            write_hander,
+        }
+    }
+
+    fn send(&self, event: Event) -> anyhow::Result<()> {
+        self.sender
+            .send(event)
+            .map_err(|_e| anyhow::anyhow!("connect send err"))
+    }
+
+    fn about(&self) {
+        self.read_handler.abort();
+        self.write_hander.abort();
+    }
+
+    fn about_with_event(self, close_event: Event) {
+        let _ = self.send(close_event);
+        tokio::task::spawn_local(async move {
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            self.about()
+        });
+    }
+}
+
 pub(crate) struct User {
     pub(crate) pin: std::rc::Rc<String>,
-    pub(crate) pc: Option<Sender>,
-    pub(crate) app: Option<Sender>,
-    pub(crate) web: Option<Sender>,
+    pc: Option<Connection>,
+    app: Option<Connection>,
+    web: Option<Connection>,
 }
 
 impl std::fmt::Debug for User {
@@ -77,26 +116,38 @@ impl User {
         } = login;
         match platform {
             Platform::App(stream) => {
-                let sender = tcp::process(stream, self.pin.clone(), auth_message);
-                if let Some(old) = self.app.replace(sender) {
+                let (sender, read_handler, write_hander) =
+                    tcp::process(stream, self.pin.clone(), auth_message);
+                if let Some(old) =
+                    self.app
+                        .replace(Connection::new(sender, read_handler, write_hander))
+                {
                     tracing::error!("{}: remove old > app < connection", self.pin.as_str());
-                    let _ = old.send(Event::Close(false, "other device connected".to_string()));
+                    old.about_with_event(Event::Close(false, "other device connected".to_string()));
                     return true;
                 };
             }
             Platform::Pc(stream) => {
-                let sender = tcp::process(stream, self.pin.clone(), auth_message);
-                if let Some(old) = self.pc.replace(sender) {
+                let (sender, read_handler, write_hander) =
+                    tcp::process(stream, self.pin.clone(), auth_message);
+                if let Some(old) =
+                    self.pc
+                        .replace(Connection::new(sender, read_handler, write_hander))
+                {
                     tracing::error!("{}: remove old > pc < connection", self.pin.as_str());
-                    let _ = old.send(Event::Close(false, "other device connected".to_string()));
+                    old.about_with_event(Event::Close(false, "other device connected".to_string()));
                     return true;
                 };
             }
             Platform::Web(socket) => {
-                let sender = websocket::process(socket, self.pin.clone(), auth_message);
-                if let Some(old) = self.web.replace(sender) {
+                let (sender, read_handler, write_hander) =
+                    websocket::process(socket, self.pin.clone(), auth_message);
+                if let Some(old) =
+                    self.web
+                        .replace(Connection::new(sender, read_handler, write_hander))
+                {
                     tracing::error!("{}: remove old > web < connection", self.pin.as_str());
-                    let _ = old.send(Event::Close(false, "other device connected".to_string()));
+                    old.about_with_event(Event::Close(false, "other device connected".to_string()));
                     return true;
                 };
             }
@@ -114,6 +165,7 @@ impl User {
         if let Some(sender) = self.app.as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(Event::WriteBatch(trace_id, message_bytes.clone())) {
             tracing::error!("{}: app send failed", self.pin);
+            sender.about();
             self.app = None;
             flag -= 1;
         };
@@ -121,6 +173,7 @@ impl User {
         if let Some(sender) = self.pc.as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(Event::WriteBatch(trace_id, message_bytes.clone())) {
             tracing::error!("{}: pc send failed", self.pin);
+            sender.about();
             self.app = None;
             flag -= 1;
         };
@@ -128,6 +181,7 @@ impl User {
         if let Some(sender) = self.web.as_ref().inspect(|_|flag += 1) &&
         let Err(_) = sender.send(Event::WriteBatch(trace_id, message_bytes.clone())) {
             tracing::error!("{}: web send failed", self.pin);
+            sender.about();
             self.app = None;
             flag -= 1;
         };

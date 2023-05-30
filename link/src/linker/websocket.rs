@@ -39,7 +39,11 @@ pub(crate) fn process(
     socket: axum::extract::ws::WebSocket,
     pin: std::rc::Rc<String>,
     auth_message: super::Content,
-) -> crate::linker::Sender {
+) -> (
+    crate::linker::Sender,
+    tokio::task::JoinHandle<()>,
+    tokio::task::JoinHandle<()>,
+) {
     let (tx, rx) = local_sync::mpsc::unbounded::channel::<crate::linker::Event>();
     let rx = local_sync::stream_wrappers::unbounded::ReceiverStream::new(rx);
 
@@ -50,7 +54,8 @@ pub(crate) fn process(
     let (close, read_close_rx) = tokio::sync::broadcast::channel::<()>(1);
     let retry_close_rx = close.subscribe();
 
-    let (mut write, ack_window) = handle(pin.clone(), socket, tx.clone(), read_close_rx);
+    let (mut write, ack_window, read_handler) =
+        handle(pin.clone(), socket, tx.clone(), read_close_rx);
 
     let auth_message: Vec<u8> = auth_message.to_vec().unwrap();
     let mut id_worker = crate::snowflake::SnowflakeIdWorkerInner::new(1, 1).unwrap();
@@ -62,7 +67,8 @@ pub(crate) fn process(
 
     ack_window.run(pin.as_str(), retry_close_rx, ws_collect, rx);
 
-    tokio::task::spawn_local(async move {
+    // write
+    let write_handler = tokio::task::spawn_local(async move {
         use futures::SinkExt as _;
         use futures::StreamExt as _;
 
@@ -101,7 +107,7 @@ pub(crate) fn process(
         let _ = write.close().await;
     });
 
-    tx
+    (tx, read_handler, write_handler)
 }
 
 fn handle(
@@ -112,6 +118,7 @@ fn handle(
 ) -> (
     futures::stream::SplitSink<axum::extract::ws::WebSocket, axum::extract::ws::Message>,
     super::ack_window::AckWindow,
+    tokio::task::JoinHandle<()>,
 ) {
     let ack_window =
         super::ack_window::AckWindow::new(crate::RETRY_CONFIG.get().unwrap().window_size);
@@ -121,7 +128,7 @@ fn handle(
     let (sink, mut stream) = socket.split();
 
     let ack_window_c = ack_window.clone();
-    tokio::task::spawn_local(async move {
+    let read_handler = tokio::task::spawn_local(async move {
         loop {
             let control = tokio::select! {
                 _ = read_close_rx.recv() => return,
@@ -159,5 +166,5 @@ fn handle(
             "websocket read error".to_string(),
         ));
     });
-    (sink, ack_window)
+    (sink, ack_window, read_handler)
 }

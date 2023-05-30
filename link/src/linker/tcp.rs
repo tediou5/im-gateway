@@ -48,7 +48,11 @@ pub(crate) fn process(
     stream: tokio::net::TcpStream,
     pin: std::rc::Rc<String>,
     auth_message: super::Content,
-) -> crate::linker::Sender {
+) -> (
+    crate::linker::Sender,
+    tokio::task::JoinHandle<()>,
+    tokio::task::JoinHandle<()>,
+) {
     tracing::info!(
         "[{pin}] ready to process tcp message: {:?}",
         stream.peer_addr()
@@ -65,7 +69,8 @@ pub(crate) fn process(
     let (close, read_close_rx) = tokio::sync::broadcast::channel::<()>(1);
     let retry_close_rx = close.subscribe();
 
-    let (mut sink, ack_window) = handle(pin.clone(), stream, tx.clone(), read_close_rx);
+    let (mut sink, ack_window, read_handler) =
+        handle(pin.clone(), stream, tx.clone(), read_close_rx);
 
     // send auth message first, auth message alse need ack.
     let auth_message: Vec<u8> = auth_message.to_vec().unwrap();
@@ -79,7 +84,7 @@ pub(crate) fn process(
     ack_window.run(pin.as_str(), retry_close_rx, tcp_collect, rx);
 
     // write
-    tokio::task::spawn_local(async move {
+    let write_hander = tokio::task::spawn_local(async move {
         use futures::SinkExt as _;
         use tokio_stream::StreamExt as _;
 
@@ -111,7 +116,7 @@ pub(crate) fn process(
         crate::axum_handler::LINK_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
     });
 
-    tx
+    (tx, read_handler, write_hander)
 }
 
 /// handle spawn a new task, read the request through the tcpStream, then send response to channel tx
@@ -126,6 +131,7 @@ fn handle(
         std::rc::Rc<Vec<u8>>,
     >,
     super::ack_window::AckWindow,
+    tokio::task::JoinHandle<()>,
 ) {
     let ack_window =
         super::ack_window::AckWindow::new(crate::RETRY_CONFIG.get().unwrap().window_size);
@@ -137,7 +143,7 @@ fn handle(
     let (sink, mut stream) = codec.framed(stream).split();
 
     let ack_window_c = ack_window.clone();
-    tokio::task::spawn_local(async move {
+    let read_handler = tokio::task::spawn_local(async move {
         loop {
             let control = tokio::select! {
                 _ = read_close_rx.recv() => return,
@@ -162,5 +168,5 @@ fn handle(
         ));
     });
 
-    (sink, ack_window)
+    (sink, ack_window, read_handler)
 }
