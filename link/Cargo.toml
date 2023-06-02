@@ -2,7 +2,7 @@
 authors = ["qians <qiangezaici@outlook.com>"]
 edition = "2021"
 name = "im-infra-link"
-version = "1.0.0"
+version = "0.9.3"
 
 [[bin]]
 name = "im-infra-link"

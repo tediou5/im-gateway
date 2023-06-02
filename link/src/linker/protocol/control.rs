@@ -1,8 +1,5 @@
 use bytes::BufMut;
 
-#[derive(Debug, Eq, PartialEq)]
-// pub(crate) struct Controls<'e>(pub(crate) Vec<Control<'e>>);
-
 pub(crate) struct ControlCodec;
 
 #[derive(Debug, Eq, PartialEq)]
