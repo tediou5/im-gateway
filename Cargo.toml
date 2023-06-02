@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "sdk-link",
     "link/",
     "proxy/",
     "local-sync/",
