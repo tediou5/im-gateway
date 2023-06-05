@@ -26,6 +26,7 @@ impl Content {
         content: &[u8],
         id_worker: &mut crate::snowflake::SnowflakeIdWorkerInner,
     ) -> anyhow::Result<(u64, Vec<u8>)> {
+        // FIXME:
         let flag: u8 = 0b00000001;
         let len = content.len() as u16;
         let trace_id = id_worker.next_id()?;

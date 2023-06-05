@@ -43,14 +43,10 @@ impl std::fmt::Debug for Event {
     }
 }
 
-impl tokio_util::codec::Encoder<std::rc::Rc<Vec<u8>>> for ControlCodec {
+impl tokio_util::codec::Encoder<Vec<u8>> for ControlCodec {
     type Error = anyhow::Error;
 
-    fn encode(
-        &mut self,
-        item: std::rc::Rc<Vec<u8>>,
-        dst: &mut bytes::BytesMut,
-    ) -> anyhow::Result<()> {
+    fn encode(&mut self, item: Vec<u8>, dst: &mut bytes::BytesMut) -> anyhow::Result<()> {
         dst.reserve(item.len());
         dst.extend_from_slice(item.as_slice());
         Ok(())
