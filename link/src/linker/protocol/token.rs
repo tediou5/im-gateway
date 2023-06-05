@@ -1,24 +1,35 @@
+const SECRET_KEY: [u8; 32] = [
+    142, 41, 224, 201, 169, 225, 121, 200, 110, 106, 120, 34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+];
+
+const APPID: &'static str = "appId";
+const PIN: &'static str = "pin";
+
+pub(crate) fn parse_user_token(token: &str) -> anyhow::Result<String> {
+    let verifier = josekit::jws::HS256.verifier_from_bytes(SECRET_KEY).unwrap();
+    let (payload, _) = josekit::jwt::decode_with_verifier(token, &verifier).unwrap();
+    println!("payload: {:?}", payload);
+    let appid = payload
+        .claim(APPID)
+        .ok_or(anyhow::anyhow!("parse token error: appid not exist"))?
+        .as_str()
+        .unwrap();
+    let pin = payload
+        .claim(PIN)
+        .ok_or(anyhow::anyhow!("parse token error: pin not exist"))?
+        .as_str()
+        .unwrap();
+
+    Ok(format!("{appid}:{pin}"))
+}
+
 #[cfg(test)]
 mod test {
-    use ahash::HashMap;
-    use josekit::{
-        jws::{JwsHeader, HS256},
-        jwt::{self, JwtPayload},
-        JoseError,
-    };
-
     #[test]
     fn parse_token() {
-        use base64::{engine::general_purpose, Engine as _};
-
-        let key: [u8; 32] = [
-            142, 41, 224, 201, 169, 225, 121, 200, 110, 106, 120, 34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        ];
-
-        // Verifing JWT
-        let verifier = HS256.verifier_from_bytes(key).unwrap();
-        let (payload, header) = jwt::decode_with_verifier("eyJhbGciOiJIUzI1NiJ9.eyJzYWx0Ijoid1M5aUhkMmUiLCJwaW4iOiIxMDAwMDAxIiwiYXBwSWQiOiJqTFVUeWlMcCJ9.9AzF2fKc1EY90vrF_qeqgKqhDTX3TmWBgXSdnipCX8s", &verifier).unwrap();
-        println!("payload: {:?}", payload);
+        let uid = super::parse_user_token("eyJhbGciOiJIUzI1NiJ9.eyJzYWx0Ijoid1M5aUhkMmUiLCJwaW4iOiIxMDAwMDAxIiwiYXBwSWQiOiJqTFVUeWlMcCJ9.9AzF2fKc1EY90vrF_qeqgKqhDTX3TmWBgXSdnipCX8s").unwrap();
+        let res = "jLUTyiLp:1000001".to_string();
+        assert_eq!(uid, res);
     }
 }

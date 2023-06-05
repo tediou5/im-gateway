@@ -25,7 +25,6 @@ pub(crate) struct Login {
     auth_message: crate::linker::Content,
 }
 
-#[derive(Debug)]
 pub(crate) enum Platform {
     App(tokio::net::TcpStream),
     Pc(tokio::net::TcpStream),

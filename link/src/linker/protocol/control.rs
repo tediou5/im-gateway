@@ -34,10 +34,7 @@ impl std::fmt::Debug for Event {
 }
 
 impl Control {
-    pub(crate) fn new_disconnect_bytes(
-        reason: String,
-        need_reconnect: bool,
-    ) -> Vec<u8> {
+    pub(crate) fn new_disconnect_bytes(reason: String, need_reconnect: bool) -> Vec<u8> {
         let mut id_worker = crate::snowflake::SnowflakeIdWorkerInner::new(0, 0).unwrap();
         let id = id_worker.next_id().unwrap();
         let reason = reason.as_bytes();

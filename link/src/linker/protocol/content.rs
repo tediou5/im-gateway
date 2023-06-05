@@ -22,48 +22,17 @@ pub(crate) enum Content {
 }
 
 impl Content {
-    pub(crate) fn new_base_info_content(
-        app_id: &str,
-        id: &str,
-        timestamp: i64,
-        base_info: &crate::linker::auth::BaseInfo,
-    ) -> Content {
-        let data = std::collections::HashMap::from([
-            ("chatId".to_string(), serde_json::json!("")),
-            ("msgFormat".to_string(), serde_json::json!("TEXT")),
-            ("msgId".to_string(), serde_json::json!(&id[0..32])),
-            (
-                "noticeType".to_string(),
-                serde_json::json!("USER_BASE_INFO"),
-            ),
-            (
-                "body".to_string(),
-                serde_json::json!(serde_json::to_string(&base_info).unwrap_or_default()),
-            ),
-            ("chatMsgType".to_string(), serde_json::json!("Notice")),
-            ("fromId".to_string(), serde_json::json!(&base_info.pin)),
-            ("appId".to_string(), serde_json::json!(app_id)),
-            ("chatType".to_string(), serde_json::json!("Private")),
-            ("timestamp".to_string(), serde_json::json!(timestamp)),
-        ]);
-        Content::Message { _ext: data }
-    }
-
     pub(crate) async fn handle_auth<F, U>(self, platform_op: F) -> anyhow::Result<()>
     where
         F: FnOnce(String, Content) -> U,
-        U: std::future::Future<Output = anyhow::Result<crate::linker::Login>>,
+        U: std::future::Future<Output = anyhow::Result<crate::linker::Platform>>,
     {
         if let Content::Connect {
-            app_id,
-            token,
-            platform,
+            token, platform, ..
         } = self
         {
-            crate::linker::auth::auth(app_id.as_str(), token.as_str(), platform.as_str())
-                .await?
-                .check(app_id, platform.to_lowercase(), platform_op)
-                .await?;
+            let uid = crate::linker::protocol::token::parse_user_token(token.as_str())?;
+            let dispatcher = crate::DISPATCHER.get().unwrap();
         }
 
         Ok(())
