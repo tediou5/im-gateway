@@ -7,6 +7,8 @@ pub(crate) mod websocket;
 pub(crate) use protocol::{content::Content, control::Control};
 
 pub(crate) type Sender = local_sync::mpsc::unbounded::Tx<Event>;
+pub(crate) type TcpFramed =
+    tokio_util::codec::Framed<tokio::net::TcpStream, crate::linker::protocol::ControlCodec>;
 
 #[derive(Debug, Clone)]
 pub(crate) enum Event {
@@ -21,14 +23,39 @@ pub(crate) enum SenderEvent {
 }
 
 pub(crate) struct Login {
-    platform: Platform,
-    auth_message: crate::linker::Content,
+    pub(crate) platform: Platform,
+    pub(crate) auth_message: crate::linker::Content,
 }
 
 pub(crate) enum Platform {
-    App(tokio::net::TcpStream),
-    Pc(tokio::net::TcpStream),
+    App(TcpFramed),
+    Pc(TcpFramed),
     Web(axum::extract::ws::WebSocket),
+}
+
+impl std::fmt::Debug for Platform {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::App(_) => f.write_fmt(format_args!("Platform: App")),
+            Self::Pc(_) => f.write_fmt(format_args!("Platform: Pc")),
+            Self::Web(_) => f.write_fmt(format_args!("Platform: Web")),
+        }
+    }
+}
+
+impl Platform {
+    pub(crate) async fn close(self, reason: String) {
+        let close_message = crate::linker::Control::new_disconnect_bytes(reason, false);
+        match self {
+            Self::App(mut framed) | Self::Pc(mut framed) => {
+                use futures::SinkExt as _;
+                let _ = framed.send(close_message.into()).await;
+            }
+            Self::Web(mut websocket) => {
+                let _ = websocket.send(axum::extract::ws::Message::Binary(close_message));
+            }
+        }
+    }
 }
 
 struct Connection {

@@ -1,51 +1,29 @@
 // auth tcp then handle it.
-pub(crate) async fn auth(mut stream: tokio::net::TcpStream) -> anyhow::Result<()> {
+pub(crate) async fn auth(stream: tokio::net::TcpStream) -> anyhow::Result<()> {
     crate::axum_handler::LINK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-    use tokio::io::AsyncReadExt;
-    let mut req = [0; 2048];
-
-    let auth = match stream.read(&mut req).await {
-        Ok(n) => {
-            if n == 0 {
-                return Err(anyhow::anyhow!("tcp socket is closed"));
-            }
-            &req[0..n]
-        }
-        Err(e) => {
-            return Err(anyhow::anyhow!("failed to read from socket; err = {e}"));
-        }
-    };
-
-    tracing::trace!("recv auth request from tcp: {auth:?}");
-
+    use futures::StreamExt as _;
     use tokio_util::codec::Decoder as _;
-    let mut dst = bytes::BytesMut::from(req.as_slice());
-    let auth = crate::linker::protocol::ControlCodec.decode(&mut dst)?;
+    let codec = crate::linker::protocol::ControlCodec {};
+    let mut framed = codec.framed(stream);
 
-    if let Some(crate::linker::protocol::control::Event::Package(.., auth)) =
-        auth.map(|auth| auth.event)
-    {
-        TryInto::<crate::linker::Content>::try_into(auth.as_slice())?
-            .handle_auth(async move |platform, message| match platform.as_str() {
-                "app" => Ok(super::Login {
-                    platform: super::Platform::App(stream),
-                    auth_message: message,
-                }),
-                "pc" => Ok(super::Login {
-                    platform: super::Platform::Pc(stream),
-                    auth_message: message,
-                }),
-                _ => Err(anyhow::anyhow!("unexpected platform")),
-            })
-            .await
+    if let Some(Ok(control)) = framed.next().await &&
+    let super::Control { event , .. } = control &&
+    let super::protocol::control::Event::Package(.., content) = event &&
+    let Ok(auth) = TryInto::<crate::linker::Content>::try_into(content.as_slice()) {
+        auth.handle_auth(async move |platform| match platform.as_str() {
+            "app" => Ok(super::Platform::App(framed)),
+            "pc" => Ok(super::Platform::Pc(framed)),
+            _ => Err(anyhow::anyhow!("unexpected platform")),
+        }).await
     } else {
+        tracing::error!("must authenticate first");
         Err(anyhow::anyhow!("must authenticate first"))
     }
 }
 
 pub(crate) fn process(
-    stream: tokio::net::TcpStream,
+    framed: crate::linker::TcpFramed,
     pin: std::rc::Rc<String>,
     auth_message: super::Content,
 ) -> (
@@ -53,10 +31,10 @@ pub(crate) fn process(
     tokio::task::JoinHandle<()>,
     tokio::task::JoinHandle<()>,
 ) {
-    tracing::info!(
-        "[{pin}] ready to process tcp message: {:?}",
-        stream.peer_addr()
-    );
+    use futures::StreamExt as _;
+
+    let (mut sink, stream) = framed.split();
+
     // Use an unbounded channel to handle buffering and flushing of messages
     // to the event source...
     let (tx, rx) = local_sync::mpsc::unbounded::channel::<crate::linker::Event>();
@@ -69,8 +47,7 @@ pub(crate) fn process(
     let (close, read_close_rx) = tokio::sync::broadcast::channel::<()>(1);
     let retry_close_rx = close.subscribe();
 
-    let (mut sink, ack_window, read_handler) =
-        handle(pin.clone(), stream, tx.clone(), read_close_rx);
+    let (ack_window, read_handler) = handle(pin.clone(), stream, tx.clone(), read_close_rx);
 
     // send auth message first, auth message alse need ack.
     let auth_message: Vec<u8> = auth_message.to_vec().unwrap();
@@ -86,7 +63,6 @@ pub(crate) fn process(
     // write
     let write_hander = tokio::task::spawn_local(async move {
         use futures::SinkExt as _;
-        use tokio_stream::StreamExt as _;
 
         while let Some(event) = tcp_sender.next().await {
             match event {
@@ -122,25 +98,14 @@ pub(crate) fn process(
 /// handle spawn a new task, read the request through the tcpStream, then send response to channel tx
 fn handle(
     pin: std::rc::Rc<String>,
-    stream: tokio::net::TcpStream,
+    mut stream: futures::stream::SplitStream<crate::linker::TcpFramed>,
     tx: crate::linker::Sender,
     mut read_close_rx: tokio::sync::broadcast::Receiver<()>,
-) -> (
-    futures::stream::SplitSink<
-        tokio_util::codec::Framed<tokio::net::TcpStream, crate::linker::protocol::ControlCodec>,
-        std::rc::Rc<Vec<u8>>,
-    >,
-    super::ack_window::AckWindow,
-    tokio::task::JoinHandle<()>,
-) {
+) -> (super::ack_window::AckWindow, tokio::task::JoinHandle<()>) {
     let ack_window =
         super::ack_window::AckWindow::new(crate::RETRY_CONFIG.get().unwrap().window_size);
 
-    tracing::trace!("ready to handle tcp request: {:?}", stream.peer_addr());
     use futures::StreamExt as _;
-    use tokio_util::codec::Decoder as _;
-    let codec = crate::linker::protocol::ControlCodec {};
-    let (sink, mut stream) = codec.framed(stream).split();
 
     let ack_window_c = ack_window.clone();
     let read_handler = tokio::task::spawn_local(async move {
@@ -168,5 +133,5 @@ fn handle(
         ));
     });
 
-    (sink, ack_window, read_handler)
+    (ack_window, read_handler)
 }

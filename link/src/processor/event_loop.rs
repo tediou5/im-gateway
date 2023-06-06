@@ -1,7 +1,7 @@
 pub(super) enum Event {
     Login(
-        String,                      /* pin */
-        Vec<std::sync::Arc<String>>, /* chats */
+        String,      /* pin */
+        Vec<String>, /* chats */
         crate::linker::Login,
     ),
     Private(String /* recv */, std::sync::Arc<Vec<u8>>),
@@ -59,12 +59,7 @@ impl InnerData {
         }
     }
 
-    fn login(
-        &mut self,
-        pin: String,
-        chat_list: Vec<std::sync::Arc<String>>,
-        connection: crate::linker::Login,
-    ) {
+    fn login(&mut self, pin: String, chat_list: Vec<String>, login: crate::linker::Login) {
         let pin = std::rc::Rc::new(pin);
 
         let user_connection = self
@@ -72,14 +67,14 @@ impl InnerData {
             .entry(pin.clone())
             .or_insert_with_key(|pin| crate::linker::User::from_pin(pin.clone()));
 
-        let is_update = user_connection.update(connection);
+        let is_update = user_connection.update(login);
 
         if !is_update {
             self._login_chats(pin, chat_list)
         }
     }
 
-    fn _login_chats(&mut self, pin: std::rc::Rc<String>, chat_list: Vec<std::sync::Arc<String>>) {
+    fn _login_chats(&mut self, pin: std::rc::Rc<String>, chat_list: Vec<String>) {
         let mut regiest_chats = Vec::new();
         for chat in chat_list {
             let member = self
@@ -370,21 +365,12 @@ mod test {
             let mut inner = InnerData::new("test".to_string(), 0);
 
             let pin: std::rc::Rc<String> = "pin".to_string().into();
-            let mut chat_list = vec![
-                std::sync::Arc::new("cc1".to_string()),
-                std::sync::Arc::new("cc2".to_string()),
-            ];
+            let mut chat_list = vec!["cc1".to_string(), "cc2".to_string()];
             inner._login_chats(pin.clone(), chat_list.clone());
             assert!(inner.chats.len() == 2);
-            inner._login_chats(
-                pin.clone(),
-                vec![
-                    std::sync::Arc::new("cc1".to_string()),
-                    std::sync::Arc::new("cc2".to_string()),
-                ],
-            );
+            inner._login_chats(pin.clone(), vec!["cc1".to_string(), "cc2".to_string()]);
             assert!(inner.chats.len() == 2);
-            chat_list.push(std::sync::Arc::new("cc3".to_string()));
+            chat_list.push("cc3".to_string());
             inner._login_chats(pin, chat_list.clone());
             assert!(inner.chats.len() == 3);
         });

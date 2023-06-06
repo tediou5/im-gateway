@@ -6,6 +6,11 @@ pub(crate) enum Content {
         status: Option<i32>,
     },
     Connect {
+        #[serde(
+            default = "gen_id",
+            rename(serialize = "traceId", deserialize = "traceId")
+        )]
+        trace_id: u64,
         #[serde(rename(serialize = "appId", deserialize = "appId"))]
         app_id: String,
         token: String,
@@ -24,17 +29,35 @@ pub(crate) enum Content {
 impl Content {
     pub(crate) async fn handle_auth<F, U>(self, platform_op: F) -> anyhow::Result<()>
     where
-        F: FnOnce(String, Content) -> U,
+        F: FnOnce(String) -> U,
         U: std::future::Future<Output = anyhow::Result<crate::linker::Platform>>,
     {
         if let Content::Connect {
-            token, platform, ..
-        } = self
+            trace_id,
+            token,
+            platform,
+            ..
+        } = &self
         {
             let uid = crate::linker::protocol::token::parse_user_token(token.as_str())?;
+            let platform = platform.to_lowercase();
             let dispatcher = crate::DISPATCHER.get().unwrap();
-        }
+            let kafka = crate::KAFKA_CLIENT.get().unwrap();
+            dispatcher
+                .send(crate::processor::Event::Connect(
+                    *trace_id,
+                    uid,
+                    platform_op(platform).await?,
+                ))
+                .await
+                .map_err(|e| anyhow::anyhow!("system error: dispatcher send error: {e}"))?;
 
+            let message: crate::kafka::VecValue = self.to_vec()?.into();
+            kafka
+                .produce(message)
+                .await
+                .map_err(|e| anyhow::anyhow!("kafka error: produce error: {e}"))?;
+        }
         Ok(())
     }
 
@@ -70,5 +93,33 @@ impl TryFrom<&[u8]> for Content {
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
         // Convert the data to a string, or fail if it is serde_json error.
         Ok(serde_json::from_slice(value)?)
+    }
+}
+
+fn gen_id() -> u64 {
+    crate::snowflake::SnowflakeIdWorkerInner::new(1, 1)
+        .unwrap()
+        .next_id()
+        .unwrap()
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn serialize_connect_with_default_id() {
+        let conn_content = serde_json::json!({
+            "data": {
+                "appId": "appid",
+                "token": "token",
+                "platform": "app",
+            },
+            "protocol": "Connect"
+        });
+        let conn: super::Content = serde_json::from_value(conn_content.clone()).unwrap();
+        if let super::Content::Connect { trace_id, .. } = conn {
+            assert_ne!(trace_id, 0);
+        } else {
+            panic!("serde error")
+        };
     }
 }

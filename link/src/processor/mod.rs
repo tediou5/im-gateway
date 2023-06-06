@@ -3,14 +3,20 @@ use crate::conhash;
 pub(crate) mod chat;
 pub(crate) mod event_loop;
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(Debug, serde_derive::Serialize, serde_derive::Deserialize)]
 #[serde(untagged)]
 pub(crate) enum Event {
     #[serde(skip)]
+    Connect(
+        u64,    /* trace_id */
+        String, /* uid */
+        crate::linker::Platform,
+    ),
+    LoginFailed(u64 /* trace_id */, String /* reason */),
     Login(
-        String,                      /* pin */
-        Vec<std::sync::Arc<String>>, /* chats */
-        crate::linker::Login,
+        u64,         /* trace_id */
+        String,      /* auth_message */
+        Vec<String>, /* chats */
     ),
     Private(
         std::collections::HashSet<String>, /* recvs */
@@ -27,7 +33,9 @@ pub(crate) enum Event {
 impl Clone for Event {
     fn clone(&self) -> Self {
         match self {
-            Self::Login(..) => panic!("you cannot clone Event::Login"),
+            Self::Connect(..) => panic!("you cannot clone Event::Connect"),
+            Self::LoginFailed(..) => panic!("you cannot clone Event::LoginFailed"),
+            Self::Login(arg0, arg1, arg2) => Self::Login(arg0.clone(), arg1.clone(), arg2.clone()),
             Self::Private(arg0, arg1) => Self::Private(arg0.clone(), arg1.clone()),
             Self::Group(arg0, arg1, arg2) => Self::Group(arg0.clone(), arg1.clone(), arg2.clone()),
             Self::Chat(arg0) => Self::Chat(arg0.clone()),
@@ -49,10 +57,14 @@ pub async fn run(core_ids: Vec<core_affinity::CoreId>) -> anyhow::Result<()> {
         event_loops.push(event_loop);
     }
 
-    use tokio_stream::StreamExt as _;
+    let mut unverified: ahash::AHashMap<
+        u64, /* trace_id */
+        (String /* uid */, crate::linker::Platform),
+    > = ahash::AHashMap::new();
 
+    use tokio_stream::StreamExt as _;
     while let Some(event) = collect_rx.next().await {
-        dispatch(&conhash, &event_loops, event).await?;
+        dispatch(&conhash, &event_loops, &mut unverified, event).await?;
     }
     Ok(())
 }
@@ -60,16 +72,29 @@ pub async fn run(core_ids: Vec<core_affinity::CoreId>) -> anyhow::Result<()> {
 async fn dispatch(
     conhash: &crate::conhash::ConsistentHash<event_loop::EventLoop>,
     event_loops: &Vec<event_loop::EventLoop>,
+    unverified: &mut ahash::AHashMap<u64, (String, crate::linker::Platform)>,
     event: Event,
 ) -> anyhow::Result<()> {
     match event {
-        Event::Login(pin, chats, platform) => {
-            if let Some(node) = conhash.get(pin.as_bytes()) {
+        Event::Connect(trace_id, uid, platform) => {
+            unverified.insert(trace_id, (uid, platform));
+        }
+        Event::LoginFailed(trace_id, reason) => {
+            if let Some((_, platform)) = unverified.remove(&trace_id) {
+                platform.close(reason).await;
+            };
+        }
+        Event::Login(trace_id, auth_message, chats) => {
+            if let Some((uid, platform)) = unverified.remove(&trace_id) &&
+            let Some(node) = conhash.get(uid.as_bytes()) &&
+            let Ok(auth_message) = serde_json::from_str(auth_message.as_str()) {
                 use crate::conhash::Node as _;
-                tracing::info!("[{pin}] login in {} node.", node.name());
+                tracing::info!("[{uid}] login in {} node.", node.name());
+
+                let login = crate::linker::Login{ auth_message, platform };
                 if let Err(e) = node
                     .mailbox
-                    .send(event_loop::Event::Login(pin, chats, platform))
+                    .send(event_loop::Event::Login(uid, chats, login))
                     .await
                 {
                     return Err(anyhow::anyhow!("Dispatcher Event::Login Error: {e}"));

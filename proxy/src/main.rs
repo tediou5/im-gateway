@@ -34,6 +34,7 @@ async fn main() -> anyhow::Result<()> {
                 if let Ok(mut proto) = record.record.try_into() {
                     tokio::task::spawn(async move {
                         let linkers = match &mut proto {
+                            protocol::LinkProtocol::Login(..) | protocol::LinkProtocol::LoginFailed(..) => redis.get_linkers().await.ok(),
                             protocol::LinkProtocol::Private(recvs, ref mut message) => {
                                 // FIXME: handle error
                                 if let Some(level) = kafka.compress_level &&
@@ -138,31 +139,6 @@ mod compression {
         tracing::info!("origin len: {len}, compressed len: {}", compressed.len());
         Ok(compressed)
     }
-
-    // pub(crate) fn compress_without_head(
-    //     source: &Vec<u8>,
-    //     level: i32,
-    //     dictionary: Option<&[u8]>,
-    // ) -> anyhow::Result<Vec<u8>> {
-    //     let len = source.len();
-    //     let head = &source[0..44];
-    //     let mut body = &source[44..];
-    //     let mut compressed = Vec::<u8>::new();
-
-    //     let mut encoder = if let Some(dictionary) = dictionary {
-    //         zstd::Encoder::with_dictionary(&mut compressed, level, dictionary)?
-    //     } else {
-    //         zstd::Encoder::new(&mut compressed, level)?
-    //     };
-
-    //     std::io::copy(&mut body, &mut encoder)?;
-    //     encoder.finish()?;
-
-    //     let mut compressed_without_head = head.to_vec();
-    //     compressed_without_head.append(&mut compressed);
-    //     tracing::info!("origin len: {len}, compressed len: {}", compressed.len());
-    //     Ok(compressed)
-    // }
 
     fn _train() {
         let files = vec![

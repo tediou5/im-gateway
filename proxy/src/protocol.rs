@@ -10,6 +10,12 @@ pub(crate) enum LinkProtocol {
         std::collections::HashSet<String>, /* exclusions */
         #[serde(with = "hex")] Vec<u8>,    /* content */
     ),
+    LoginFailed(u64 /* trace_id */, String /* reason */),
+    Login(
+        u64,         /* trace_id */
+        String,      /* auth_message */
+        Vec<String>, /* chats */
+    ),
     Chat(chat::Action),
 }
 
@@ -51,7 +57,7 @@ mod test {
     use super::{chat::Action, LinkProtocol};
 
     #[test]
-    fn proto_json() {
+    fn proto_join() {
         let join = LinkProtocol::Chat(Action::Join(
             "cc_1".to_string(),
             HashSet::from_iter(["uu_1".to_string(), "uu_2".to_string()]),
@@ -61,7 +67,10 @@ mod test {
             serde_json::from_str(r#"{"join": ["cc_1", ["uu_1", "uu_2"]]}"#).unwrap();
 
         assert_eq!(join, join_from_json);
+    }
 
+    #[test]
+    fn proto_leave() {
         let leave = LinkProtocol::Chat(Action::Leave(
             "cc_1".to_string(),
             HashSet::from_iter(["uu_1".to_string(), "uu_2".to_string()]),
@@ -71,5 +80,28 @@ mod test {
             serde_json::from_str(r#"{"leave": ["cc_1", ["uu_1", "uu_2"]]}"#).unwrap();
 
         assert_eq!(leave, leave_from_json)
+    }
+
+    #[test]
+    fn proto_login() {
+        let login = LinkProtocol::Login(
+            1,
+            "baseinfo".to_string(),
+            vec!["cc1".to_string(), "cc2".to_string()],
+        );
+
+        let login_from_json: LinkProtocol =
+            serde_json::from_str(r#"[1, "baseinfo", ["cc1", "cc2"]]"#).unwrap();
+
+        assert_eq!(login, login_from_json)
+    }
+
+    #[test]
+    fn proto_login_failed() {
+        let failed = LinkProtocol::LoginFailed(1, "loginfailed".to_string());
+
+        let failed_from_json: LinkProtocol = serde_json::from_str(r#"[1, "loginfailed"]"#).unwrap();
+
+        assert_eq!(failed, failed_from_json)
     }
 }

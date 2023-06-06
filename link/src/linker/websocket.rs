@@ -17,15 +17,9 @@ pub(crate) async fn websocket(
         let _ = if let crate::linker::protocol::control::Event::Package(.., auth) = auth.event {
             TryInto::<crate::linker::Content>::try_into(auth.as_slice())
                 .unwrap()
-                .handle_auth(async move |platform, message| {
-                    tracing::info!("platform connection: {platform:?}");
-                    match platform.as_str() {
-                        "web" => Ok(super::Login {
-                            platform: super::Platform::Web(socket),
-                            auth_message: message,
-                        }),
-                        _ => Err(anyhow::anyhow!("unexpected platform")),
-                    }
+                .handle_auth(async move |platform| match platform.as_str() {
+                    "web" => Ok(super::Platform::Web(socket)),
+                    _ => Err(anyhow::anyhow!("unexpected platform")),
                 })
                 .await
         } else {
