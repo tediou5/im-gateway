@@ -77,7 +77,7 @@ async fn dispatch(
 ) -> anyhow::Result<()> {
     match event {
         Event::Connect(trace_id, uid, platform) => {
-            tracing::debug!("[{uid}] Connected in <{platform}> platform");
+            tracing::debug!("[{uid}] Connected in <{platform:?}> platform");
             unverified.insert(trace_id, (uid, platform));
         }
         Event::LoginFailed(trace_id, reason) => {
