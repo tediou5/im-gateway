@@ -24,8 +24,13 @@ impl std::fmt::Debug for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Ack(arg0) => f.debug_tuple("Ack").field(arg0).finish(),
-            Self::Package(arg0, arg1, _arg2) => {
-                f.debug_tuple("Package").field(arg0).field(arg1).finish()
+            Self::Package(arg0, arg1, arg2) => {
+                let package = String::from_utf8_lossy(arg2);
+                f.debug_struct("Package")
+                    .field("length", arg0)
+                    .field("trace_id", arg1)
+                    .field("package", &package)
+                    .finish()
             }
             Self::WeakAck => write!(f, "WeakAck"),
             Self::WeakPackage => write!(f, "WeakPackage"),
