@@ -21,7 +21,6 @@ impl Config {
 #[derive(serde_derive::Deserialize, Debug, Clone)]
 pub(crate) struct Tcp {
     pub(crate) port: u16,
-    pub(crate) auth: String,
 }
 
 #[derive(serde_derive::Deserialize, Debug, Clone)]

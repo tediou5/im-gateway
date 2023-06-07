@@ -77,10 +77,12 @@ async fn dispatch(
 ) -> anyhow::Result<()> {
     match event {
         Event::Connect(trace_id, uid, platform) => {
+            tracing::debug!("[{uid}] Connected in <{platform}> platform");
             unverified.insert(trace_id, (uid, platform));
         }
         Event::LoginFailed(trace_id, reason) => {
-            if let Some((_, platform)) = unverified.remove(&trace_id) {
+            if let Some((uid, platform)) = unverified.remove(&trace_id) {
+                tracing::error!("[{uid}] Login Failed because of <{reason}>");
                 platform.close(reason).await;
             };
         }

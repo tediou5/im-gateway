@@ -1,5 +1,4 @@
 [tcp]
-auth = "http://192.168.0.92:10804/v1/rest/merchant/user/parseToken"
 port = 10001
 
 [tcp.retry]
