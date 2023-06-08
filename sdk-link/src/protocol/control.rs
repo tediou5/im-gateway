@@ -196,8 +196,9 @@ mod test {
     #[test]
     fn package_from_slice() {
         let flag: u8 = 0b00000001;
-        let content = "hello world".as_bytes();
-        let clen = content.len() as u16;
+        let content = crate::protocol::content::Content::Heart { status: Some(200) };
+        let content_str = serde_json::to_vec(&content).unwrap();
+        let clen = content_str.len() as u16;
         let mut id_worker = crate::snowflake::SnowflakeIdWorkerInner::new(1, 1).unwrap();
         let trace_id = id_worker.next_id().unwrap();
         let mut dst = bytes::BytesMut::new();
@@ -209,14 +210,14 @@ mod test {
         dst.put_bytes(flag, 1);
         dst.put_u16(clen);
         dst.put_u64(trace_id);
-        dst.extend_from_slice(content);
+        dst.extend_from_slice(content_str.as_slice());
 
         let req_control = ControlCodec.decode(&mut dst).unwrap().unwrap();
 
         let control = Control {
             bad_network: None,
             heartbeat: None,
-            event: Event::Package(trace_id, content.try_into().unwrap()),
+            event: Event::Package(trace_id, content),
             number: 1,
         };
 
