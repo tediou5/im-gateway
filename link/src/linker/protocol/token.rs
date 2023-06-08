@@ -9,7 +9,6 @@ const PIN: &'static str = "pin";
 pub(crate) fn parse_user_token(token: &str) -> anyhow::Result<String> {
     let verifier = josekit::jws::HS256.verifier_from_bytes(SECRET_KEY).unwrap();
     let (payload, _) = josekit::jwt::decode_with_verifier(token, &verifier).unwrap();
-    println!("payload: {:?}", payload);
     let appid = payload
         .claim(APPID)
         .ok_or(anyhow::anyhow!("parse token error: appid not exist"))?
