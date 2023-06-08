@@ -24,7 +24,7 @@ pub(crate) enum SenderEvent {
 
 pub(crate) struct Login {
     pub(crate) platform: Platform,
-    pub(crate) auth_message: crate::linker::Content,
+    pub(crate) auth_message: Vec<u8>,
 }
 
 pub(crate) enum Platform {

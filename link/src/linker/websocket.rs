@@ -32,7 +32,7 @@ pub(crate) async fn websocket(
 pub(crate) fn process(
     socket: axum::extract::ws::WebSocket,
     pin: std::rc::Rc<String>,
-    auth_message: super::Content,
+    auth_message: Vec<u8>,
 ) -> (
     crate::linker::Sender,
     tokio::task::JoinHandle<()>,
@@ -51,7 +51,6 @@ pub(crate) fn process(
     let (mut write, ack_window, read_handler) =
         handle(pin.clone(), socket, tx.clone(), read_close_rx);
 
-    let auth_message: Vec<u8> = auth_message.to_vec().unwrap();
     let mut id_worker = crate::snowflake::SnowflakeIdWorkerInner::new(1, 1).unwrap();
     let (trace_id, auth_message) =
         crate::linker::Content::pack_message(&auth_message, &mut id_worker).unwrap();

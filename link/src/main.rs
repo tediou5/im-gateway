@@ -58,12 +58,21 @@ async fn init() -> anyhow::Result<()> {
     let config = config::Config::init(args.config.unwrap_or("./config.toml".to_string()));
 
     let client = reqwest::Client::new();
-    let tcp_listener = tokio::net::TcpListener::bind(config.get_tcp_addr_str()).await?;
-    let redis_client = redis::Client::new(local_addr.to_string(), config.redis).await?;
+    let tcp_listener = tokio::net::TcpListener::bind(config.get_tcp_addr_str())
+        .await
+        .unwrap();
+    println!("set tcp listener");
+    let redis_client = redis::Client::new(local_addr.to_string(), config.redis)
+        .await
+        .unwrap();
+    println!("set redis config");
 
     HTTP_CLIENT.set(client).unwrap();
+    println!("set http config");
     RETRY_CONFIG.set(config.retry).unwrap();
+    println!("set retry config");
     TCP_CONFIG.set(config.tcp).unwrap();
+    println!("set tcp config");
     REDIS_CLIENT.set(redis_client).unwrap();
     println!("starting redis client");
 
@@ -126,8 +135,17 @@ async fn init() -> anyhow::Result<()> {
                     }
                 };
                 tracing::debug!("consume {} len message.", event.len());
-                let event = serde_json::from_slice(event.as_slice())?;
+                let event = match serde_json::from_slice(event.as_slice()) {
+                    Ok(event) => event,
+                    Err(e) => {
+                        return Err(anyhow::anyhow!(
+                            "Kafka Consume Error: deser event error: {e}"
+                        ))
+                    }
+                };
+                tracing::debug!("kafka Consume: ready for dispatch event: {event:?}");
                 if (dispatcher.send(event).await).is_err() {
+                    tracing::error!("Kafka Consume Dispatch error");
                     return Err(anyhow::anyhow!(
                         "Kafka Consume Error: dispatcher send error"
                     ));

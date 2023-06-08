@@ -77,7 +77,9 @@ async fn dispatch(
 ) -> anyhow::Result<()> {
     match event {
         Event::Connect(trace_id, uid, platform) => {
-            tracing::debug!("[{uid}] Connected in <{platform:?}> platform");
+            tracing::debug!(
+                "[{uid}] Connected in <{platform:?}> platform with trace id: {trace_id}"
+            );
             unverified.insert(trace_id, (uid, platform));
         }
         Event::LoginFailed(trace_id, reason) => {
@@ -87,12 +89,12 @@ async fn dispatch(
             };
         }
         Event::Login(trace_id, auth_message, chats) => {
+            tracing::debug!("trace id: {trace_id} login");
             if let Some((uid, platform)) = unverified.remove(&trace_id) &&
-            let Some(node) = conhash.get(uid.as_bytes()) &&
-            let Ok(auth_message) = serde_json::from_str(auth_message.as_str()) {
+            let Some(node) = conhash.get(uid.as_bytes()) {
                 use crate::conhash::Node as _;
                 tracing::info!("[{uid}] login in {} node.", node.name());
-
+                let auth_message =  auth_message.as_bytes().to_vec();
                 let login = crate::linker::Login{ auth_message, platform };
                 if let Err(e) = node
                     .mailbox

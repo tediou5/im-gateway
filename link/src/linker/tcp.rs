@@ -25,7 +25,7 @@ pub(crate) async fn auth(stream: tokio::net::TcpStream) -> anyhow::Result<()> {
 pub(crate) fn process(
     framed: crate::linker::TcpFramed,
     pin: std::rc::Rc<String>,
-    auth_message: super::Content,
+    auth_message: Vec<u8>,
 ) -> (
     crate::linker::Sender,
     tokio::task::JoinHandle<()>,
@@ -50,7 +50,6 @@ pub(crate) fn process(
     let (ack_window, read_handler) = handle(pin.clone(), stream, tx.clone(), read_close_rx);
 
     // send auth message first, auth message alse need ack.
-    let auth_message: Vec<u8> = auth_message.to_vec().unwrap();
     let mut id_worker = crate::snowflake::SnowflakeIdWorkerInner::new(1, 1).unwrap();
     let (trace_id, auth_message) =
         crate::linker::Content::pack_message(&auth_message, &mut id_worker).unwrap();

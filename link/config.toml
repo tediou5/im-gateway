@@ -1,7 +1,7 @@
 [tcp]
 port = 10001
 
-[tcp.retry]
+[retry]
 max_times = 5
 timeout = 5000
 window_size = 10
