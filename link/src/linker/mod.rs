@@ -1,5 +1,4 @@
 mod ack_window;
-mod auth;
 mod protocol;
 pub(crate) mod tcp;
 pub(crate) mod websocket;
