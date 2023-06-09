@@ -97,7 +97,11 @@ impl InnerData {
 
     fn private(&mut self, pin: String, message: std::sync::Arc<Vec<u8>>) -> anyhow::Result<()> {
         if let Some(sender) = self.users.get_mut(&pin) {
-            tracing::debug!("[{}] -> send user: {pin}", self.name);
+            tracing::debug!(
+                "[{}] -> send user: {pin}\nmessage: {}",
+                self.name,
+                String::from_utf8_lossy(&message)
+            );
             let (trace_id, message) =
                 crate::linker::Content::pack_message(&message, &mut self.id_worker)?;
             let message = std::rc::Rc::new(message);
